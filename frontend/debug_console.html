@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Search Debug Console</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .debug-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .debug-header {
+            background: #2563eb;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        .debug-content {
+            padding: 20px;
+        }
+        .debug-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+        }
+        .debug-section h3 {
+            margin-top: 0;
+            color: #374151;
+            border-bottom: 2px solid #e5e7eb;
+            padding-bottom: 10px;
+        }
+        .console-output {
+            background: #1f2937;
+            color: #f9fafb;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        .test-button {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        .test-button:hover {
+            background: #1d4ed8;
+        }
+        .test-button.danger {
+            background: #dc2626;
+        }
+        .test-button.danger:hover {
+            background: #b91c1c;
+        }
+        .test-button.success {
+            background: #059669;
+        }
+        .test-button.success:hover {
+            background: #047857;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .status-success { background: #10b981; }
+        .status-error { background: #ef4444; }
+        .status-warning { background: #f59e0b; }
+        .status-info { background: #3b82f6; }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-radius: 4px;
+        }
+        .log-info { background: #dbeafe; color: #1e40af; }
+        .log-success { background: #d1fae5; color: #065f46; }
+        .log-warning { background: #fef3c7; color: #92400e; }
+        .log-error { background: #fee2e2; color: #991b1b; }
+        .copy-button {
+            background: #6b7280;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        .copy-button:hover {
+            background: #4b5563;
+        }
+    </style>
+</head>
+<body>
+    <div class="debug-container">
+        <div class="debug-header">
+            <h1>🔍 Search Email Detail Debug Console</h1>
+            <p>This page will help capture all console information to debug the search issue</p>
+        </div>
+        
+        <div class="debug-content">
+            <!-- Console Capture Section -->
+            <div class="debug-section">
+                <h3><span class="status-indicator status-info"></span>Console Output Capture</h3>
+                <p>All console messages will be captured and displayed here:</p>
+                <div class="console-output" id="consoleOutput">Waiting for console messages...</div>
+                <button class="copy-button" onclick="copyConsoleOutput()">Copy Console Output</button>
+                <button class="test-button danger" onclick="clearConsoleOutput()">Clear Console</button>
+            </div>
+
+            <!-- Manual Test Section -->
+            <div class="debug-section">
+                <h3><span class="status-indicator status-warning"></span>Manual Test Functions</h3>
+                <p>Test the search functionality step by step:</p>
+                
+                <button class="test-button" onclick="testSearchAPI()">Test Search API</button>
+                <button class="test-button" onclick="testSearchResults()">Test Search Results Storage</button>
+                <button class="test-button" onclick="testSelectSearchEmail()">Test selectSearchEmail Function</button>
+                <button class="test-button" onclick="testSearchDetailPanel()">Test Search Detail Panel</button>
+                <button class="test-button success" onclick="runFullTest()">Run Full Test</button>
+            </div>
+
+            <!-- Debug Information Section -->
+            <div class="debug-section">
+                <h3><span class="status-indicator status-info"></span>Debug Information</h3>
+                <div id="debugInfo">
+                    <p><strong>Current Search Results:</strong> <span id="currentSearchResultsCount">0</span></p>
+                    <p><strong>Search Detail Panel Status:</strong> <span id="searchDetailPanelStatus">Unknown</span></p>
+                    <p><strong>Global Functions Status:</strong> <span id="globalFunctionsStatus">Unknown</span></p>
+                    <p><strong>Last Error:</strong> <span id="lastError">None</span></p>
+                </div>
+                <button class="test-button" onclick="updateDebugInfo()">Update Debug Info</button>
+            </div>
+
+            <!-- Instructions Section -->
+            <div class="debug-section">
+                <h3><span class="status-indicator status-success"></span>Debugging Instructions</h3>
+                <ol>
+                    <li><strong>Open the main application:</strong> Go to <a href="http://localhost:3001" target="_blank">http://localhost:3001</a></li>
+                    <li><strong>Open this debug page:</strong> Keep this page open in another tab</li>
+                    <li><strong>Test search functionality:</strong>
+                        <ul>
+                            <li>Click "Search" in the main app navigation</li>
+                            <li>Enter search term: "test"</li>
+                            <li>Click on any search result</li>
+                        </ul>
+                    </li>
+                    <li><strong>Check console output:</strong> All console messages will appear above</li>
+                    <li><strong>Run manual tests:</strong> Use the test buttons above</li>
+                    <li><strong>Copy results:</strong> Click "Copy Console Output" and share the results</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Console capture functionality
+        const originalConsole = {
+            log: console.log,
+            error: console.error,
+            warn: console.warn,
+            info: console.info
+        };
+
+        const consoleOutput = document.getElementById('consoleOutput');
+        let consoleMessages = [];
+
+        function addConsoleMessage(type, message) {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = `[${timestamp}] ${type.toUpperCase()}: ${message}`;
+            consoleMessages.push(logEntry);
+            consoleOutput.textContent = consoleMessages.join('\n');
+            consoleOutput.scrollTop = consoleOutput.scrollHeight;
+        }
+
+        // Override console methods
+        console.log = function(...args) {
+            originalConsole.log.apply(console, args);
+            addConsoleMessage('log', args.join(' '));
+        };
+
+        console.error = function(...args) {
+            originalConsole.error.apply(console, args);
+            addConsoleMessage('error', args.join(' '));
+        };
+
+        console.warn = function(...args) {
+            originalConsole.warn.apply(console, args);
+            addConsoleMessage('warn', args.join(' '));
+        };
+
+        console.info = function(...args) {
+            originalConsole.info.apply(console, args);
+            addConsoleMessage('info', args.join(' '));
+        };
+
+        // Utility functions
+        function copyConsoleOutput() {
+            const text = consoleMessages.join('\n');
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Console output copied to clipboard!');
+            }).catch(() => {
+                // Fallback for older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                alert('Console output copied to clipboard!');
+            });
+        }
+
+        function clearConsoleOutput() {
+            consoleMessages = [];
+            consoleOutput.textContent = 'Console cleared...';
+        }
+
+        // Test functions
+        async function testSearchAPI() {
+            try {
+                console.log('Testing Search API...');
+                const response = await fetch('http://localhost:8000/api/v1/test/emails/?page=1&page_size=3&search=test');
+                const data = await response.json();
+                console.log('Search API Response:', data);
+                console.log('Found emails:', data.emails.length);
+                if (data.emails.length > 0) {
+                    console.log('Sample email:', data.emails[0]);
+                }
+            } catch (error) {
+                console.error('Search API Test Failed:', error);
+            }
+        }
+
+        function testSearchResults() {
+            console.log('Testing Search Results Storage...');
+            console.log('currentSearchResults:', window.currentSearchResults);
+            console.log('currentSearchResults length:', window.currentSearchResults ? window.currentSearchResults.length : 'undefined');
+            console.log('currentSearchResults type:', typeof window.currentSearchResults);
+        }
+
+        function testSelectSearchEmail() {
+            console.log('Testing selectSearchEmail Function...');
+            console.log('selectSearchEmail function exists:', typeof window.selectSearchEmail);
+            if (typeof window.selectSearchEmail === 'function') {
+                console.log('selectSearchEmail function is available');
+            } else {
+                console.error('selectSearchEmail function is NOT available');
+            }
+        }
+
+        function testSearchDetailPanel() {
+            console.log('Testing Search Detail Panel...');
+            const searchDetailPanel = document.getElementById('searchEmailDetailPanel');
+            const searchDetailContent = document.getElementById('searchDetailContent');
+            const searchListPanel = document.querySelector('#searchPage .email-list-panel');
+            
+            console.log('searchEmailDetailPanel:', searchDetailPanel);
+            console.log('searchDetailContent:', searchDetailContent);
+            console.log('searchListPanel:', searchListPanel);
+            
+            if (searchDetailPanel) {
+                console.log('Panel display style:', searchDetailPanel.style.display);
+                console.log('Panel visibility:', searchDetailPanel.offsetParent !== null);
+            }
+        }
+
+        async function runFullTest() {
+            console.log('=== RUNNING FULL SEARCH TEST ===');
+            await testSearchAPI();
+            testSearchResults();
+            testSelectSearchEmail();
+            testSearchDetailPanel();
+            console.log('=== FULL TEST COMPLETED ===');
+        }
+
+        function updateDebugInfo() {
+            // Update current search results count
+            const count = window.currentSearchResults ? window.currentSearchResults.length : 0;
+            document.getElementById('currentSearchResultsCount').textContent = count;
+            
+            // Update search detail panel status
+            const panel = document.getElementById('searchEmailDetailPanel');
+            const status = panel ? (panel.style.display === 'flex' ? 'Visible' : 'Hidden') : 'Not Found';
+            document.getElementById('searchDetailPanelStatus').textContent = status;
+            
+            // Update global functions status
+            const functionsStatus = [];
+            if (typeof window.selectSearchEmail === 'function') functionsStatus.push('selectSearchEmail ✓');
+            if (typeof window.selectEmail === 'function') functionsStatus.push('selectEmail ✓');
+            if (typeof window.loadSearchEmailDetail === 'function') functionsStatus.push('loadSearchEmailDetail ✓');
+            
+            document.getElementById('globalFunctionsStatus').textContent = functionsStatus.join(', ') || 'None Found';
+            
+            // Update last error
+            const lastError = consoleMessages.filter(msg => msg.includes('ERROR')).pop();
+            document.getElementById('lastError').textContent = lastError ? lastError.split('ERROR: ')[1] : 'None';
+        }
+
+        // Initialize
+        console.log('Debug Console initialized');
+        console.log('Ready to capture console messages from the main application');
+        
+        // Update debug info every 2 seconds
+        setInterval(updateDebugInfo, 2000);
+    </script>
+</body>
+</html>

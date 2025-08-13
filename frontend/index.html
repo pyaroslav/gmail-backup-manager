@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gmail Backup Manager</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <div class="logo">
+                    <i class="fas fa-database"></i>
+                    <h1>Gmail Backup Manager</h1>
+                </div>
+                <div class="header-actions">
+                    <button class="btn-icon" id="themeToggle">
+                        <i class="fas fa-sun"></i>
+                    </button>
+                    <button class="btn-icon" id="notificationsBtn">
+                        <i class="fas fa-bell"></i>
+                        <span class="notification-badge">3</span>
+                    </button>
+                    <div class="user-info">
+                        <span class="user-email">test@example.com</span>
+                        <div class="user-avatar">
+                            <i class="fas fa-user"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Navigation -->
+        <nav class="navigation">
+            <div class="nav-content">
+                <div class="nav-items">
+                    <a href="#" class="nav-item active" data-page="dashboard">
+                        <i class="fas fa-tachometer-alt"></i>
+                        <span>Dashboard</span>
+                    </a>
+                    <a href="#" class="nav-item" data-page="emails">
+                        <i class="fas fa-envelope"></i>
+                        <span>Emails</span>
+                    </a>
+                    <a href="#" class="nav-item" data-page="search">
+                        <i class="fas fa-search"></i>
+                        <span>Search</span>
+                    </a>
+                    <a href="#" class="nav-item" data-page="sync">
+                        <i class="fas fa-sync"></i>
+                        <span>Sync</span>
+                    </a>
+                    <a href="#" class="nav-item" data-page="analytics">
+                        <i class="fas fa-chart-bar"></i>
+                        <span>Analytics</span>
+                    </a>
+                    <a href="#" class="nav-item" data-page="settings">
+                        <i class="fas fa-cog"></i>
+                        <span>Settings</span>
+                    </a>
+                </div>
+                <button class="btn-logout">
+                    <i class="fas fa-sign-out-alt"></i>
+                    <span>Sign Out</span>
+                </button>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Email Interface -->
+            <div class="email-interface" id="emailInterface" style="display: none;">
+                <!-- Email Toolbar -->
+                <div class="email-toolbar">
+                    <div class="toolbar-left">
+                        <label class="checkbox-container">
+                            <input type="checkbox" id="selectAll">
+                            <span class="checkmark"></span>
+                        </label>
+                        <button class="btn-icon" id="sortBtn" title="Sort">
+                            <i class="fas fa-sort"></i>
+                        </button>
+                        <span class="email-count" id="emailCount">0 emails</span>
+                    </div>
+                    <div class="toolbar-right" id="bulkActions" style="display: none;">
+                        <span class="selected-count" id="selectedCount">0 selected</span>
+                        <div class="bulk-actions">
+                            <button class="btn-action" data-action="read">Mark as read</button>
+                            <button class="btn-action" data-action="unread">Mark as unread</button>
+                            <button class="btn-action" data-action="star">Star</button>
+                            <button class="btn-action delete" data-action="delete">Delete</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Split Pane Layout -->
+                <div class="split-pane">
+                    <!-- Left Panel - Email List -->
+                    <div class="email-list-panel" id="emailListPanel">
+                        <div class="email-list" id="emailList">
+                            <!-- Emails will be loaded here -->
+                        </div>
+                        <div class="pagination" id="pagination" style="display: none;">
+                            <button class="btn-page" id="prevPage">Previous</button>
+                            <span class="page-info" id="pageInfo">Page 1 of 1</span>
+                            <button class="btn-page" id="nextPage">Next</button>
+                        </div>
+                    </div>
+
+                    <!-- Right Panel - Email Detail -->
+                    <div class="email-detail-panel" id="emailDetailPanel" style="display: none;">
+                        <div class="detail-header">
+                            <h3>Email Details</h3>
+                            <button class="btn-icon" id="closeDetail">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <div class="detail-content" id="detailContent">
+                            <!-- Email detail will be loaded here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dashboard -->
+            <div class="dashboard" id="dashboard">
+                <h2>Dashboard</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <i class="fas fa-envelope"></i>
+                        <div class="stat-info">
+                            <h3>Total Emails</h3>
+                            <p class="stat-number" id="totalEmails">0</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <i class="fas fa-star"></i>
+                        <div class="stat-info">
+                            <h3>Starred</h3>
+                            <p class="stat-number" id="starredEmails">0</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <i class="fas fa-eye"></i>
+                        <div class="stat-info">
+                            <h3>Unread</h3>
+                            <p class="stat-number" id="unreadEmails">0</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <i class="fas fa-sync"></i>
+                        <div class="stat-info">
+                            <h3>Last Sync</h3>
+                            <p class="stat-number" id="lastSync">Never</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Recent Activity -->
+                <div class="recent-activity">
+                    <h3>Recent Activity</h3>
+                    <div class="activity-list">
+                        <div class="activity-item">
+                            <i class="fas fa-envelope"></i>
+                            <div class="activity-info">
+                                <p>New email received from john@example.com</p>
+                                <span class="activity-time">2 minutes ago</span>
+                            </div>
+                        </div>
+                        <div class="activity-item">
+                            <i class="fas fa-sync"></i>
+                            <div class="activity-info">
+                                <p>Email sync completed</p>
+                                <span class="activity-time">5 minutes ago</span>
+                            </div>
+                        </div>
+                        <div class="activity-item">
+                            <i class="fas fa-star"></i>
+                            <div class="activity-info">
+                                <p>Email starred</p>
+                                <span class="activity-time">10 minutes ago</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Search Page -->
+            <div class="search-page" id="searchPage" style="display: none;">
+                <h2>Search Emails</h2>
+                <div class="search-container">
+                    <div class="search-box">
+                        <input type="text" id="searchInput" placeholder="Search emails..." class="search-input">
+                        <button class="search-btn" id="searchBtn">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </div>
+                    <div class="search-filters">
+                        <select id="searchFilter" class="filter-select">
+                            <option value="all">All</option>
+                            <option value="subject">Subject</option>
+                            <option value="sender">Sender</option>
+                            <option value="content">Content</option>
+                        </select>
+                        <input type="date" id="dateFrom" class="date-input" placeholder="From date">
+                        <input type="date" id="dateTo" class="date-input" placeholder="To date">
+                    </div>
+                </div>
+                
+                <!-- Split-pane layout for search results -->
+                <div class="email-interface" style="display: flex; height: calc(100vh - 300px); margin-top: 1rem;">
+                    <!-- Search Results Panel -->
+                    <div class="email-list-panel" style="flex: 1; border-right: 1px solid #e5e7eb; overflow: hidden; display: flex; flex-direction: column;">
+                        <div class="search-results" id="searchResults" style="flex: 1; overflow-y: auto;">
+                            <div class="text-center text-muted" style="padding: 2rem;">
+                                <i class="fas fa-search" style="font-size: 3rem; color: #d1d5db; margin-bottom: 1rem;"></i>
+                                <p>Enter search terms to find emails</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Email Detail Panel -->
+                    <div class="email-detail-panel" id="searchEmailDetailPanel" style="flex: 1; display: none; flex-direction: column; background: white;">
+                        <div class="email-detail-header">
+                            <button class="btn-close" id="closeSearchDetail">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <div class="email-detail-content" id="searchDetailContent">
+                            <!-- Email detail content will be loaded here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sync Page -->
+            <div class="sync-page" id="syncPage" style="display: none;">
+                <h2>Email Synchronization</h2>
+                
+                <!-- Sync Status Dashboard -->
+                <div class="sync-status">
+                    <div class="status-card">
+                        <i class="fas fa-sync"></i>
+                        <div class="status-info">
+                            <h3>Sync Status</h3>
+                            <p id="syncStatus">Ready to sync</p>
+                        </div>
+                    </div>
+                    <div class="status-card">
+                        <i class="fas fa-clock"></i>
+                        <div class="status-info">
+                            <h3>Last Sync</h3>
+                            <p id="lastSyncTime">Never</p>
+                        </div>
+                    </div>
+                    <div class="status-card">
+                        <i class="fas fa-envelope"></i>
+                        <div class="status-info">
+                            <h3>Total Synced</h3>
+                            <p id="totalSynced">0 emails</p>
+                        </div>
+                    </div>
+                    <div class="status-card">
+                        <i class="fas fa-database"></i>
+                        <div class="status-info">
+                            <h3>Database Size</h3>
+                            <p id="databaseSize">Loading...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sync Options -->
+                <div class="sync-options">
+                    <h3>Sync Options</h3>
+                    <div class="sync-options-grid">
+                        <!-- Quick Sync -->
+                        <div class="sync-option-card">
+                            <h4>Quick Sync</h4>
+                            <p>Sync recent emails (last 1000)</p>
+                            <div class="sync-input-group">
+                                <label for="quickSyncCount">Email Count:</label>
+                                <input type="number" id="quickSyncCount" value="1000" min="100" max="10000">
+                            </div>
+                            <button class="btn btn-primary" id="quickSyncBtn">
+                                <i class="fas fa-bolt"></i>
+                                Quick Sync
+                            </button>
+                        </div>
+
+                        <!-- Date Range Sync -->
+                        <div class="sync-option-card">
+                            <h4>Date Range Sync</h4>
+                            <p>Sync emails from specific date range</p>
+                            <div class="sync-input-group">
+                                <label for="dateFromSync">From Date:</label>
+                                <input type="date" id="dateFromSync">
+                            </div>
+                            <div class="sync-input-group">
+                                <label for="dateToSync">To Date:</label>
+                                <input type="date" id="dateToSync">
+                            </div>
+                            <div class="sync-input-group">
+                                <label for="dateSyncCount">Max Emails:</label>
+                                <input type="number" id="dateSyncCount" value="1000" min="100" max="10000">
+                            </div>
+                            <button class="btn btn-primary" id="dateRangeSyncBtn">
+                                <i class="fas fa-calendar"></i>
+                                Sync Date Range
+                            </button>
+                        </div>
+
+                        <!-- Full Sync -->
+                        <div class="sync-option-card">
+                            <h4>Full Sync</h4>
+                            <p>Sync all available emails (may take time)</p>
+                            <div class="sync-input-group">
+                                <label for="fullSyncCount">Max Emails:</label>
+                                <input type="number" id="fullSyncCount" value="5000" min="1000" max="50000">
+                            </div>
+                            <button class="btn btn-warning" id="fullSyncBtn">
+                                <i class="fas fa-download"></i>
+                                Full Sync
+                            </button>
+                        </div>
+
+                        <!-- Background Sync -->
+                        <div class="sync-option-card">
+                            <h4>Background Sync</h4>
+                            <p>Continuous automatic synchronization</p>
+                            <div class="sync-input-group">
+                                <label for="backgroundInterval">Interval (minutes):</label>
+                                <input type="number" id="backgroundInterval" value="5" min="1" max="60">
+                            </div>
+                            <div class="background-sync-controls">
+                                <button class="btn btn-success" id="startBackgroundSyncBtn">
+                                    <i class="fas fa-play"></i>
+                                    Start Background
+                                </button>
+                                <button class="btn btn-danger" id="stopBackgroundSyncBtn" style="display: none;">
+                                    <i class="fas fa-stop"></i>
+                                    Stop Background
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sync Controls -->
+                <div class="sync-controls">
+                    <button class="btn btn-primary" id="startSync">
+                        <i class="fas fa-sync"></i>
+                        Start Manual Sync
+                    </button>
+                    <button class="btn btn-secondary" id="stopSync" disabled>
+                        <i class="fas fa-stop"></i>
+                        Stop Sync
+                    </button>
+                    <button class="btn btn-info" id="resetLastSyncBtn">
+                        <i class="fas fa-undo"></i>
+                        Reset Last Sync
+                    </button>
+                </div>
+
+                <!-- Progress Monitoring -->
+                <div class="sync-progress" id="syncProgress" style="display: none;">
+                    <h3>Sync Progress</h3>
+                    <div class="progress-container">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progressFill"></div>
+                        </div>
+                        <div class="progress-stats">
+                            <span class="progress-text" id="progressText">0% complete</span>
+                            <span class="progress-count" id="progressCount">0 / 0 emails</span>
+                            <span class="progress-speed" id="progressSpeed">0 emails/min</span>
+                        </div>
+                    </div>
+                    <div class="progress-details">
+                        <div class="detail-item">
+                            <span class="detail-label">Start Time:</span>
+                            <span class="detail-value" id="syncStartTime">-</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Elapsed Time:</span>
+                            <span class="detail-value" id="syncElapsedTime">-</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Estimated Time:</span>
+                            <span class="detail-value" id="syncEstimatedTime">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Real-time Monitoring -->
+                <div class="sync-monitoring" id="syncMonitoring" style="display: none;">
+                    <h3>Real-time Monitoring</h3>
+                    <div class="monitoring-grid">
+                        <div class="monitoring-card">
+                            <h4>Current Batch</h4>
+                            <p id="currentBatch">-</p>
+                        </div>
+                        <div class="monitoring-card">
+                            <h4>Batch Progress</h4>
+                            <p id="batchProgress">-</p>
+                        </div>
+                        <div class="monitoring-card">
+                            <h4>New Emails</h4>
+                            <p id="newEmailsCount">-</p>
+                        </div>
+                        <div class="monitoring-card">
+                            <h4>Errors</h4>
+                            <p id="errorCount">-</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sync Log -->
+                <div class="sync-log" id="syncLog">
+                    <h3>Sync Log</h3>
+                    <div class="log-controls">
+                        <button class="btn btn-sm btn-secondary" id="clearLogBtn">
+                            <i class="fas fa-trash"></i>
+                            Clear Log
+                        </button>
+                        <button class="btn btn-sm btn-secondary" id="exportLogBtn">
+                            <i class="fas fa-download"></i>
+                            Export Log
+                        </button>
+                    </div>
+                    <div class="log-entries" id="logEntries">
+                        <div class="log-entry">
+                            <span class="log-time">System ready</span>
+                            <span class="log-message">Email sync system initialized</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Analytics Page -->
+            <div class="analytics-page" id="analyticsPage" style="display: none;">
+                <h2>Email Analytics</h2>
+                <div class="analytics-grid">
+                    <div class="chart-card">
+                        <h3>Email Volume Over Time</h3>
+                        <div class="chart-placeholder" id="volumeChart">
+                            <div class="chart-bars">
+                                <div class="bar" style="height: 60%"></div>
+                                <div class="bar" style="height: 80%"></div>
+                                <div class="bar" style="height: 45%"></div>
+                                <div class="bar" style="height: 90%"></div>
+                                <div class="bar" style="height: 70%"></div>
+                                <div class="bar" style="height: 85%"></div>
+                                <div class="bar" style="height: 55%"></div>
+                            </div>
+                            <div class="chart-labels">
+                                <span>Mon</span>
+                                <span>Tue</span>
+                                <span>Wed</span>
+                                <span>Thu</span>
+                                <span>Fri</span>
+                                <span>Sat</span>
+                                <span>Sun</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <h3>Email Categories</h3>
+                        <div class="pie-chart" id="categoryChart">
+                            <div class="pie-segment" style="--percentage: 40; --color: #3b82f6;"></div>
+                            <div class="pie-segment" style="--percentage: 25; --color: #10b981;"></div>
+                            <div class="pie-segment" style="--percentage: 20; --color: #f59e0b;"></div>
+                            <div class="pie-segment" style="--percentage: 15; --color: #ef4444;"></div>
+                        </div>
+                        <div class="chart-legend">
+                            <div class="legend-item">
+                                <span class="legend-color" style="background: #3b82f6;"></span>
+                                <span>Work (40%)</span>
+                            </div>
+                            <div class="legend-item">
+                                <span class="legend-color" style="background: #10b981;"></span>
+                                <span>Personal (25%)</span>
+                            </div>
+                            <div class="legend-item">
+                                <span class="legend-color" style="background: #f59e0b;"></span>
+                                <span>News (20%)</span>
+                            </div>
+                            <div class="legend-item">
+                                <span class="legend-color" style="background: #ef4444;"></span>
+                                <span>Other (15%)</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="analytics-stats">
+                    <div class="stat-item">
+                        <h4>Average Response Time</h4>
+                        <p>2.5 hours</p>
+                    </div>
+                    <div class="stat-item">
+                        <h4>Most Active Sender</h4>
+                        <p>john@example.com</p>
+                    </div>
+                    <div class="stat-item">
+                        <h4>Busiest Day</h4>
+                        <p>Tuesday</p>
+                    </div>
+                    <div class="stat-item">
+                        <h4>Storage Used</h4>
+                        <p>1.2 GB</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Page -->
+            <div class="settings-page" id="settingsPage" style="display: none;">
+                <h2>Settings</h2>
+                <div class="settings-sections">
+                    <div class="settings-section">
+                        <h3>Account Settings</h3>
+                        <div class="setting-item">
+                            <label for="emailAddress">Email Address</label>
+                            <input type="email" id="emailAddress" value="user@example.com" class="setting-input">
+                        </div>
+                        <div class="setting-item">
+                            <label for="displayName">Display Name</label>
+                            <input type="text" id="displayName" value="John Doe" class="setting-input">
+                        </div>
+                        <div class="setting-item">
+                            <label for="timezone">Timezone</label>
+                            <select id="timezone" class="setting-select">
+                                <option value="UTC">UTC</option>
+                                <option value="EST">Eastern Time</option>
+                                <option value="PST">Pacific Time</option>
+                                <option value="GMT">GMT</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="settings-section">
+                        <h3>Sync Settings</h3>
+                        <div class="setting-item">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="autoSync" checked>
+                                <span class="checkmark"></span>
+                                Enable automatic sync
+                            </label>
+                        </div>
+                        <div class="setting-item">
+                            <label for="syncInterval">Sync Interval</label>
+                            <select id="syncInterval" class="setting-select">
+                                <option value="5">5 minutes</option>
+                                <option value="15" selected>15 minutes</option>
+                                <option value="30">30 minutes</option>
+                                <option value="60">1 hour</option>
+                            </select>
+                        </div>
+                        <div class="setting-item">
+                            <label for="maxEmails">Max Emails to Sync</label>
+                            <input type="number" id="maxEmails" value="1000" class="setting-input">
+                        </div>
+                    </div>
+                    
+                    <div class="settings-section">
+                        <h3>Display Settings</h3>
+                        <div class="setting-item">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="darkMode">
+                                <span class="checkmark"></span>
+                                Dark mode
+                            </label>
+                        </div>
+                        <div class="setting-item">
+                            <label for="emailsPerPage">Emails per page</label>
+                            <select id="emailsPerPage" class="setting-select">
+                                <option value="10">10</option>
+                                <option value="25" selected>25</option>
+                                <option value="50">50</option>
+                                <option value="100">100</option>
+                            </select>
+                        </div>
+                        <div class="setting-item">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="showPreview" checked>
+                                <span class="checkmark"></span>
+                                Show email preview
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="settings-section">
+                        <h3>Actions</h3>
+                        <div class="setting-actions">
+                            <button class="btn btn-primary" id="saveSettings">
+                                <i class="fas fa-save"></i>
+                                Save Settings
+                            </button>
+                            <button class="btn btn-secondary" id="resetSettings">
+                                <i class="fas fa-undo"></i>
+                                Reset to Default
+                            </button>
+                            <button class="btn btn-danger" id="clearData">
+                                <i class="fas fa-trash"></i>
+                                Clear All Data
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner"></div>
+        <p>Loading...</p>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
