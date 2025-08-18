@@ -1339,6 +1339,252 @@ app.get('/api/db/email/:id', async (req, res) => {
     }
 });
 
+// Comprehensive Analytics Endpoints
+
+// Get analytics overview data
+app.get('/api/analytics/overview', async (req, res) => {
+    try {
+        const timeRange = req.query.range || '30'; // days
+        
+        // Calculate date filter
+        let dateFilter = '';
+        let dateParams = [];
+        if (timeRange !== 'all') {
+            const daysAgo = new Date();
+            daysAgo.setDate(daysAgo.getDate() - parseInt(timeRange));
+            dateFilter = 'WHERE date_received >= $1';
+            dateParams = [daysAgo.toISOString()];
+        }
+        
+        // Get basic counts
+        let countsQuery = `
+            SELECT 
+                COUNT(*) as total_emails,
+                COUNT(CASE WHEN is_read = false THEN 1 END) as unread_emails,
+                COUNT(CASE WHEN is_starred = true THEN 1 END) as starred_emails,
+                COUNT(CASE WHEN is_important = true THEN 1 END) as important_emails,
+                COUNT(CASE WHEN is_spam = true THEN 1 END) as spam_emails,
+                COUNT(CASE WHEN is_trash = true THEN 1 END) as trash_emails
+            FROM emails`;
+        
+        if (dateFilter) {
+            countsQuery += ` ${dateFilter}`;
+        }
+        
+        const countsResult = await client.query(countsQuery, dateParams);
+        
+        // Get date range
+        let dateRangeQuery = `
+            SELECT 
+                MIN(date_received) as oldest_email,
+                MAX(date_received) as newest_email
+            FROM emails`;
+        
+        if (dateFilter) {
+            dateRangeQuery += ` ${dateFilter}`;
+        }
+        
+        const dateRangeResult = await client.query(dateRangeQuery, dateParams);
+        
+        // Get top senders
+        let topSendersQuery = `
+            SELECT 
+                sender,
+                COUNT(*) as email_count,
+                COUNT(CASE WHEN is_read = false THEN 1 END) as unread_count
+            FROM emails`;
+        
+        if (dateFilter) {
+            topSendersQuery += ` ${dateFilter}`;
+        }
+        
+        topSendersQuery += ` GROUP BY sender ORDER BY email_count DESC LIMIT 10`;
+        const topSendersResult = await client.query(topSendersQuery, dateParams);
+        
+        // Get hourly distribution
+        let hourlyQuery = `
+            SELECT 
+                EXTRACT(HOUR FROM date_received) as hour,
+                COUNT(*) as email_count
+            FROM emails`;
+        
+        if (dateFilter) {
+            hourlyQuery += ` ${dateFilter}`;
+        }
+        
+        hourlyQuery += ` GROUP BY EXTRACT(HOUR FROM date_received) ORDER BY hour`;
+        const hourlyResult = await client.query(hourlyQuery, dateParams);
+        
+        // Get daily distribution
+        let dailyQuery = `
+            SELECT 
+                EXTRACT(DOW FROM date_received) as day_of_week,
+                COUNT(*) as email_count
+            FROM emails`;
+        
+        if (dateFilter) {
+            dailyQuery += ` ${dateFilter}`;
+        }
+        
+        dailyQuery += ` GROUP BY EXTRACT(DOW FROM date_received) ORDER BY day_of_week`;
+        const dailyResult = await client.query(dailyQuery, dateParams);
+        
+        // Get labels/categories - skip for now as labels is JSONB
+        const labelsResult = { rows: [] };
+        
+        // Get email length distribution
+        let lengthQuery = `
+            SELECT 
+                CASE 
+                    WHEN LENGTH(body_plain) < 100 THEN 'Short (< 100 chars)'
+                    WHEN LENGTH(body_plain) < 500 THEN 'Medium (100-500 chars)'
+                    WHEN LENGTH(body_plain) < 1000 THEN 'Long (500-1000 chars)'
+                    ELSE 'Very Long (> 1000 chars)'
+                END as length_category,
+                COUNT(*) as email_count
+            FROM emails`;
+        
+        if (dateFilter) {
+            lengthQuery += ` ${dateFilter}`;
+        }
+        
+        lengthQuery += ` GROUP BY 
+                CASE 
+                    WHEN LENGTH(body_plain) < 100 THEN 'Short (< 100 chars)'
+                    WHEN LENGTH(body_plain) < 500 THEN 'Medium (100-500 chars)'
+                    WHEN LENGTH(body_plain) < 1000 THEN 'Long (500-1000 chars)'
+                    ELSE 'Very Long (> 1000 chars)'
+                END
+            ORDER BY email_count DESC`;
+        const lengthResult = await client.query(lengthQuery, dateParams);
+        
+        // Get subject line analysis
+        let subjectQuery = `
+            SELECT 
+                CASE 
+                    WHEN subject ILIKE '%urgent%' OR subject ILIKE '%important%' THEN 'Urgent/Important'
+                    WHEN subject ILIKE '%meeting%' OR subject ILIKE '%call%' THEN 'Meetings/Calls'
+                    WHEN subject ILIKE '%newsletter%' OR subject ILIKE '%update%' THEN 'Newsletters/Updates'
+                    WHEN subject ILIKE '%promo%' OR subject ILIKE '%sale%' THEN 'Promotions/Sales'
+                    WHEN subject ILIKE '%receipt%' OR subject ILIKE '%invoice%' THEN 'Receipts/Invoices'
+                    WHEN subject ILIKE '%password%' OR subject ILIKE '%reset%' THEN 'Security/Password'
+                    ELSE 'Other'
+                END as subject_category,
+                COUNT(*) as email_count
+            FROM emails`;
+        
+        if (dateFilter) {
+            subjectQuery += ` ${dateFilter}`;
+        }
+        
+        subjectQuery += ` GROUP BY 
+                CASE 
+                    WHEN subject ILIKE '%urgent%' OR subject ILIKE '%important%' THEN 'Urgent/Important'
+                    WHEN subject ILIKE '%meeting%' OR subject ILIKE '%call%' THEN 'Meetings/Calls'
+                    WHEN subject ILIKE '%newsletter%' OR subject ILIKE '%update%' THEN 'Newsletters/Updates'
+                    WHEN subject ILIKE '%promo%' OR subject ILIKE '%sale%' THEN 'Promotions/Sales'
+                    WHEN subject ILIKE '%receipt%' OR subject ILIKE '%invoice%' THEN 'Receipts/Invoices'
+                    WHEN subject ILIKE '%password%' OR subject ILIKE '%reset%' THEN 'Security/Password'
+                    ELSE 'Other'
+                END
+            ORDER BY email_count DESC`;
+        const subjectResult = await client.query(subjectQuery, dateParams);
+        
+        const counts = countsResult.rows[0];
+        const dateRange = dateRangeResult.rows[0];
+        
+        res.json({
+            success: true,
+            data: {
+                overview: {
+                    total_emails: parseInt(counts.total_emails),
+                    unread_emails: parseInt(counts.unread_emails),
+                    starred_emails: parseInt(counts.starred_emails),
+                    important_emails: parseInt(counts.important_emails),
+                    spam_emails: parseInt(counts.spam_emails),
+                    trash_emails: parseInt(counts.trash_emails),
+                    read_rate: counts.total_emails > 0 ? ((counts.total_emails - counts.unread_emails) / counts.total_emails * 100).toFixed(1) : 0
+                },
+                date_range: {
+                    oldest_email: dateRange.oldest_email,
+                    newest_email: dateRange.newest_email
+                },
+                top_senders: topSendersResult.rows,
+                hourly_distribution: hourlyResult.rows,
+                daily_distribution: dailyResult.rows,
+                labels: labelsResult.rows,
+                email_lengths: lengthResult.rows,
+                subject_categories: subjectResult.rows
+            },
+            time_range: timeRange,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('Error fetching analytics overview:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching analytics overview',
+            error: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// Get email activity trends
+app.get('/api/analytics/trends', async (req, res) => {
+    try {
+        const timeRange = req.query.range || '30'; // days
+        
+        let dateFilter = '';
+        let dateParams = [];
+        
+        if (timeRange === 'all') {
+            // For "all time", don't use a date filter
+            dateFilter = '';
+            dateParams = [];
+        } else {
+            // Calculate date for specific time range
+            const daysAgo = new Date();
+            daysAgo.setDate(daysAgo.getDate() - parseInt(timeRange));
+            dateFilter = 'WHERE date_received >= $1';
+            dateParams = [daysAgo.toISOString()];
+        }
+        
+        // Get daily email counts
+        let trendsQuery = `
+            SELECT 
+                DATE(date_received) as date,
+                COUNT(*) as email_count,
+                COUNT(CASE WHEN is_read = false THEN 1 END) as unread_count
+            FROM emails`;
+        
+        if (dateFilter) {
+            trendsQuery += ` ${dateFilter}`;
+        }
+        
+        trendsQuery += ` GROUP BY DATE(date_received) ORDER BY date`;
+        
+        const trendsResult = await client.query(trendsQuery, dateParams);
+        
+        res.json({
+            success: true,
+            data: trendsResult.rows,
+            time_range: timeRange,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('Error fetching email trends:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching email trends',
+            error: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
     res.json({

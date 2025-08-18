@@ -9,6 +9,7 @@
     <title>Gmail Backup Manager</title>
     <link rel="stylesheet" href="styles.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <div class="app-container">
@@ -491,7 +492,159 @@
 
             <!-- Analytics Page -->
             <div class="analytics-page" id="analyticsPage" style="display: none;">
-                <!-- Content will be dynamically loaded by JavaScript -->
+                <div class="analytics-header">
+                    <h2><i class="fas fa-chart-line"></i> Email Analytics Dashboard</h2>
+                    <div class="analytics-controls">
+                        <select id="analyticsTimeRange" class="analytics-select">
+                            <option value="7">Last 7 Days</option>
+                            <option value="30" selected>Last 30 Days</option>
+                            <option value="90">Last 90 Days</option>
+                            <option value="365">Last Year</option>
+                            <option value="all">All Time</option>
+                        </select>
+                        <button id="refreshAnalytics" class="btn btn-primary">
+                            <i class="fas fa-sync-alt"></i> Refresh
+                        </button>
+                        <button id="exportAnalytics" class="btn btn-secondary">
+                            <i class="fas fa-download"></i> Export
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Loading State -->
+                <div id="analyticsLoading" class="analytics-loading">
+                    <div class="loading-spinner"></div>
+                    <p>Loading comprehensive analytics data...</p>
+                </div>
+
+                <!-- Analytics Content -->
+                <div id="analyticsContent" class="analytics-content" style="display: none;">
+                    <!-- Key Metrics Overview -->
+                    <div class="analytics-section">
+                        <h3><i class="fas fa-tachometer-alt"></i> Key Metrics</h3>
+                        <div class="metrics-grid" id="keyMetricsGrid">
+                            <!-- Metrics will be populated by JavaScript -->
+                        </div>
+                    </div>
+
+                    <!-- Email Activity Trends -->
+                    <div class="analytics-section">
+                        <h3><i class="fas fa-chart-area"></i> Email Activity Trends</h3>
+                        <div class="chart-container">
+                            <canvas id="emailActivityChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Sender Analysis -->
+                    <div class="analytics-section">
+                        <h3><i class="fas fa-users"></i> Top Senders Analysis</h3>
+                        <div class="sender-analysis-grid">
+                            <div class="chart-container">
+                                <canvas id="topSendersChart"></canvas>
+                            </div>
+                            <div class="sender-stats" id="senderStats">
+                                <!-- Sender statistics will be populated -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Email Categories & Labels -->
+                    <div class="analytics-section">
+                        <h3><i class="fas fa-tags"></i> Email Categories & Labels</h3>
+                        <div class="categories-grid">
+                            <div class="chart-container">
+                                <canvas id="labelsChart"></canvas>
+                            </div>
+                            <div class="category-breakdown" id="categoryBreakdown">
+                                <!-- Category breakdown will be populated -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Read vs Unread Analysis -->
+                    <div class="analytics-section">
+                        <h3><i class="fas fa-eye"></i> Read vs Unread Analysis</h3>
+                        <div class="read-analysis-grid">
+                            <div class="chart-container">
+                                <canvas id="readUnreadChart"></canvas>
+                            </div>
+                            <div class="read-stats" id="readStats">
+                                <!-- Read statistics will be populated -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Time-based Analysis -->
+                    <div class="analytics-section">
+                        <h3><i class="fas fa-clock"></i> Time-based Analysis</h3>
+                        <div class="time-analysis-grid">
+                            <div class="chart-container">
+                                <h4>Email Volume by Hour</h4>
+                                <canvas id="hourlyChart"></canvas>
+                            </div>
+                            <div class="chart-container">
+                                <h4>Email Volume by Day of Week</h4>
+                                <canvas id="weeklyChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Storage & Performance -->
+                    <div class="analytics-section">
+                        <h3><i class="fas fa-database"></i> Storage & Performance</h3>
+                        <div class="storage-grid">
+                            <div class="storage-card">
+                                <h4>Database Size</h4>
+                                <div class="storage-metrics" id="storageMetrics">
+                                    <!-- Storage metrics will be populated -->
+                                </div>
+                            </div>
+                            <div class="storage-card">
+                                <h4>Sync Performance</h4>
+                                <div class="performance-metrics" id="performanceMetrics">
+                                    <!-- Performance metrics will be populated -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Email Content Analysis -->
+                    <div class="analytics-section">
+                        <h3><i class="fas fa-file-text"></i> Content Analysis</h3>
+                        <div class="content-analysis-grid">
+                            <div class="content-card">
+                                <h4>Subject Line Analysis</h4>
+                                <div class="subject-stats" id="subjectStats">
+                                    <!-- Subject statistics will be populated -->
+                                </div>
+                            </div>
+                            <div class="content-card">
+                                <h4>Email Length Distribution</h4>
+                                <canvas id="emailLengthChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Advanced Insights -->
+                    <div class="analytics-section">
+                        <h3><i class="fas fa-lightbulb"></i> Advanced Insights</h3>
+                        <div class="insights-grid" id="insightsGrid">
+                            <!-- Insights will be populated -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Error State -->
+                <div id="analyticsError" class="analytics-error" style="display: none;">
+                    <div class="error-content">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <h3>Analytics Loading Error</h3>
+                        <p id="analyticsErrorMessage">Unable to load analytics data</p>
+                        <button onclick="loadAnalytics()" class="btn btn-primary">
+                            <i class="fas fa-redo"></i> Retry
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <!-- Settings Page -->
@@ -601,6 +754,6 @@
     <!-- Note: Frontend timeout is 3 seconds, but sync-status endpoint takes ~5 seconds. 
          The endpoint will timeout and fall back to email-count endpoint which doesn't have sync details. -->
     <!-- Real-time sync monitoring with improved activity detection -->
-            <script src="script.js?v=2025-08-18-15-25"></script>
+            <script src="script.js?v=2025-08-18-16-20"></script>
 </body>
 </html>

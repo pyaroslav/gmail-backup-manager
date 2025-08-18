@@ -2247,159 +2247,585 @@ function clearSyncErrors() {
     }
 }
 
+// Global chart instances to track and destroy
+let chartInstances = {};
+
 // Analytics functionality
 function loadAnalytics() {
-    console.log('🔄 ANALYTICS FUNCTION CALLED - START');
-    console.log('🔄 Loading analytics...');
+    console.log('🔄 Loading comprehensive analytics...');
     
-    // Show loading state
     const analyticsPage = document.getElementById('analyticsPage');
-    console.log('📊 Analytics page element in loadAnalytics:', analyticsPage);
+    const loadingElement = document.getElementById('analyticsLoading');
+    const contentElement = document.getElementById('analyticsContent');
+    const errorElement = document.getElementById('analyticsError');
     
     if (!analyticsPage) {
         console.error('❌ Analytics page element not found!');
         return;
     }
     
-    console.log('✅ Setting loading HTML...');
-    analyticsPage.innerHTML = `
-        <h2>Email Analytics</h2>
-        <div class="loading-spinner">
-            <div class="spinner"></div>
-            <p>Loading comprehensive analytics data...</p>
-        </div>
-    `;
-    console.log('✅ Loading HTML set, starting API calls...');
+    // Destroy existing charts before creating new ones
+    destroyAllCharts();
     
-    // Use Node.js endpoints for real-time data
+    // Show loading state
+    loadingElement.style.display = 'block';
+    contentElement.style.display = 'none';
+    errorElement.style.display = 'none';
+    
+    // Get time range from selector
+    const timeRange = document.getElementById('analyticsTimeRange').value;
+    
+    // Fetch comprehensive analytics data
     Promise.all([
-        // Get current email count and analytics data
-        fetch('http://localhost:3002/api/db/email-count'),
-        fetch('http://localhost:3002/api/db/sync-status'),
-        fetch('http://localhost:3002/api/db/emails?page=1&page_size=1000')
+        fetch(`http://localhost:3002/api/analytics/overview?range=${timeRange}`),
+        fetch(`http://localhost:3002/api/analytics/trends?range=${timeRange}`),
+        fetch('http://localhost:3002/api/db/dashboard')
     ])
     .then(responses => {
-        console.log('🌐 All API responses received:', responses.map(r => r.status));
+        console.log('🌐 Analytics API responses received:', responses.map(r => r.status));
         return Promise.all(responses.map(r => r.json()));
     })
-    .then(([emailCount, syncStatus, emailsData]) => {
-        console.log('📊 Analytics data loaded successfully!');
-        console.log('📈 Email count data:', emailCount);
-        console.log('📊 Sync status data:', syncStatus);
-        console.log('📧 Emails data:', emailsData);
-        console.log('🎯 Calling displayDashboardAnalytics...');
-        displayDashboardAnalytics(emailCount, syncStatus, emailsData);
-        console.log('✅ Analytics display complete!');
+    .then(([overviewData, trendsData, dashboardData]) => {
+        console.log('📊 Comprehensive analytics data loaded successfully!');
+        
+        if (overviewData.success && trendsData.success) {
+            displayComprehensiveAnalytics(overviewData.data, trendsData.data, dashboardData);
+        } else {
+            throw new Error('Analytics data not available');
+        }
     })
     .catch(error => {
         console.error('❌ Error loading analytics:', error);
-        console.error('❌ Error details:', error.message, error.stack);
-        analyticsPage.innerHTML = `
-            <h2>Email Analytics</h2>
-            <div class="error-message">
-                <p>Error loading analytics data: ${error.message}</p>
-                <button onclick="loadAnalytics()" class="btn btn-primary">Retry</button>
-            </div>
-        `;
+        loadingElement.style.display = 'none';
+        contentElement.style.display = 'none';
+        errorElement.style.display = 'block';
+        document.getElementById('analyticsErrorMessage').textContent = error.message;
     });
 }
 
-function displayDashboardAnalytics(emailCount, syncStatus, emailsData) {
-    console.log('🎨 displayDashboardAnalytics called');
-    const analyticsPage = document.getElementById('analyticsPage');
-    console.log('📊 Analytics page element in display function:', analyticsPage);
+// Function to destroy all existing charts
+function destroyAllCharts() {
+    // Get all canvas elements and destroy any existing charts
+    const canvasElements = document.querySelectorAll('canvas');
+    canvasElements.forEach(canvas => {
+        const existingChart = Chart.getChart(canvas);
+        if (existingChart) {
+            existingChart.destroy();
+        }
+    });
     
-    if (!analyticsPage) {
-        console.error('❌ Analytics page element not found in display function!');
-        return;
-    }
+    // Clear our tracking object
+    chartInstances = {};
+}
+
+function displayComprehensiveAnalytics(overviewData, trendsData, dashboardData) {
+    console.log('🎨 Displaying comprehensive analytics...');
     
-    // Format numbers with commas
+    const loadingElement = document.getElementById('analyticsLoading');
+    const contentElement = document.getElementById('analyticsContent');
+    
+    // Hide loading, show content
+    loadingElement.style.display = 'none';
+    contentElement.style.display = 'block';
+    
+    // Display key metrics
+    displayKeyMetrics(overviewData.overview, dashboardData);
+    
+    // Display charts
+    displayEmailActivityChart(trendsData);
+    displayTopSendersChart(overviewData.top_senders);
+    displayLabelsChart(overviewData.labels);
+    displayReadUnreadChart(overviewData.overview);
+    displayHourlyChart(overviewData.hourly_distribution);
+    displayWeeklyChart(overviewData.daily_distribution);
+    displayEmailLengthChart(overviewData.email_lengths);
+    
+    // Display statistics
+    displaySenderStats(overviewData.top_senders);
+    displayCategoryBreakdown(overviewData.labels);
+    displayReadStats(overviewData.overview);
+    displayStorageMetrics(dashboardData);
+    displayPerformanceMetrics(dashboardData);
+    displaySubjectStats(overviewData.subject_categories);
+    
+    // Display insights
+    displayAdvancedInsights(overviewData, trendsData, dashboardData);
+    
+    console.log('✅ Comprehensive analytics displayed successfully!');
+}
+
+function displayKeyMetrics(overview, dashboardData) {
+    const metricsGrid = document.getElementById('keyMetricsGrid');
+    
     const formatNumber = (num) => num.toLocaleString();
-    const formatPercentage = (num) => num.toFixed(1) + '%';
+    const formatPercentage = (num) => {
+        const numValue = parseFloat(num);
+        return isNaN(numValue) ? '0.0%' : numValue.toFixed(1) + '%';
+    };
     
-    console.log('🔢 Formatting functions ready');
-    
-    // Calculate storage estimate (rough estimate: 35KB per email)
-    const storageEstimateMB = Math.round((emailCount.total_emails * 35) / 1024);
-    const storageEstimateGB = (storageEstimateMB / 1024).toFixed(2);
-    
-    // Calculate unread emails from the emails data
-    const unreadEmails = emailsData.emails ? emailsData.emails.filter(email => !email.is_read).length : 0;
-    
-    // Get last sync time from sync status
-    const lastSyncTime = syncStatus.last_sync_time || 'Never';
-    
-    // Get top sender from emails data
-    const topSender = emailsData.emails && emailsData.emails.length > 0 ? emailsData.emails[0].sender : 'Unknown';
-    
-    analyticsPage.innerHTML = `
-        <h2>Email Dashboard</h2>
-        
-        <!-- Key Metrics Dashboard -->
-        <div class="analytics-metrics">
-            <div class="metric-card">
-                <h3>Total Emails</h3>
-                <div class="metric-value">${formatNumber(emailCount.total_emails)}</div>
-                <div class="metric-subtitle">All time</div>
-            </div>
-            <div class="metric-card">
-                <h3>Unread Emails</h3>
-                <div class="metric-value">${formatNumber(unreadEmails)}</div>
-                <div class="metric-subtitle">${formatPercentage((unreadEmails / emailCount.total_emails) * 100)} of total</div>
-            </div>
-            <div class="metric-card">
-                <h3>Last Sync</h3>
-                <div class="metric-value">${lastSyncTime}</div>
-                <div class="metric-subtitle">Last synchronization</div>
-            </div>
-            <div class="metric-card">
-                <h3>Storage Used</h3>
-                <div class="metric-value">${storageEstimateGB} GB</div>
-                <div class="metric-subtitle">Estimated storage</div>
-            </div>
+    metricsGrid.innerHTML = `
+        <div class="metric-card">
+            <h3>Total Emails</h3>
+            <div class="metric-value">${formatNumber(overview.total_emails)}</div>
+            <div class="metric-subtitle">All time</div>
         </div>
-        
-        <!-- Sync Status Section -->
-        <div class="sync-status-section">
-            <h3>Sync Status</h3>
-            <div class="status-grid">
-                <div class="status-card">
-                    <h4>Current Status</h4>
-                    <div class="status-value ${syncStatus.status === 'syncing' ? 'active' : 'inactive'}">${syncStatus.status || 'Unknown'}</div>
-                </div>
-                <div class="status-card">
-                    <h4>Database Size</h4>
-                    <div class="status-value">${syncStatus.database_size_pretty || 'Unknown'}</div>
-                </div>
-                <div class="status-card">
-                    <h4>Latest Email</h4>
-                    <div class="status-value">${syncStatus.latest_email_date ? new Date(syncStatus.latest_email_date).toLocaleDateString() : 'Unknown'}</div>
-                </div>
-            </div>
+        <div class="metric-card">
+            <h3>Unread Emails</h3>
+            <div class="metric-value">${formatNumber(overview.unread_emails)}</div>
+            <div class="metric-subtitle">${formatPercentage(overview.read_rate)} read rate</div>
         </div>
-        
-        <!-- Recent Emails Section -->
-        <div class="recent-emails-section">
-            <h3>Recent Emails</h3>
-            <div class="emails-list">
-                ${emailsData.emails && emailsData.emails.length > 0 ? 
-                    emailsData.emails.slice(0, 10).map(email => `
-                        <div class="email-item ${email.is_read ? 'read' : 'unread'}">
-                            <div class="email-sender">${email.sender || 'Unknown'}</div>
-                            <div class="email-subject">${email.subject || 'No Subject'}</div>
-                            <div class="email-date">${email.date_received ? new Date(email.date_received).toLocaleDateString() : 'Unknown'}</div>
-                        </div>
-                    `).join('') : 
-                    '<div class="no-emails">No emails found</div>'
-                }
-            </div>
+        <div class="metric-card">
+            <h3>Starred Emails</h3>
+            <div class="metric-value">${formatNumber(overview.starred_emails)}</div>
+            <div class="metric-subtitle">Important emails</div>
+        </div>
+        <div class="metric-card">
+            <h3>Database Size</h3>
+            <div class="metric-value">${dashboardData.database_size_pretty || 'Unknown'}</div>
+            <div class="metric-subtitle">Storage used</div>
+        </div>
+        <div class="metric-card">
+            <h3>Important Emails</h3>
+            <div class="metric-value">${formatNumber(overview.important_emails)}</div>
+            <div class="metric-subtitle">High priority</div>
+        </div>
+        <div class="metric-card">
+            <h3>Spam Emails</h3>
+            <div class="metric-value">${formatNumber(overview.spam_emails)}</div>
+            <div class="metric-subtitle">Filtered out</div>
         </div>
     `;
+}
+
+function displayEmailActivityChart(trendsData) {
+    const ctx = document.getElementById('emailActivityChart');
+    if (!ctx) return;
     
-    console.log('🎨 Analytics HTML generated, setting innerHTML...');
-    console.log('📏 HTML length:', analyticsPage.innerHTML.length);
-    console.log('✅ Analytics display function complete!');
+    const labels = trendsData.map(item => new Date(item.date).toLocaleDateString());
+    const emailCounts = trendsData.map(item => item.email_count);
+    const unreadCounts = trendsData.map(item => item.unread_count);
+    
+    chartInstances['emailActivityChart'] = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Total Emails',
+                data: emailCounts,
+                borderColor: '#3b82f6',
+                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                tension: 0.4
+            }, {
+                label: 'Unread Emails',
+                data: unreadCounts,
+                borderColor: '#ef4444',
+                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                tension: 0.4
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Email Activity Over Time'
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+}
+
+function displayTopSendersChart(topSenders) {
+    const ctx = document.getElementById('topSendersChart');
+    if (!ctx) return;
+    
+    const labels = topSenders.slice(0, 8).map(sender => 
+        sender.sender.length > 20 ? sender.sender.substring(0, 20) + '...' : sender.sender
+    );
+    const data = topSenders.slice(0, 8).map(sender => sender.email_count);
+    const colors = [
+        '#3b82f6', '#ef4444', '#10b981', '#f59e0b', 
+        '#8b5cf6', '#06b6d4', '#84cc16', '#f97316'
+    ];
+    
+    chartInstances['topSendersChart'] = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: data,
+                backgroundColor: colors,
+                borderWidth: 2,
+                borderColor: '#ffffff'
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Top Email Senders'
+                },
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+}
+
+function displayLabelsChart(labels) {
+    const ctx = document.getElementById('labelsChart');
+    if (!ctx) return;
+    
+    const labelsData = labels.slice(0, 6);
+    const labelNames = labelsData.map(label => label.label);
+    const labelCounts = labelsData.map(label => label.email_count);
+    const colors = [
+        '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4'
+    ];
+    
+    chartInstances['labelsChart'] = new Chart(ctx, {
+        type: 'pie',
+        data: {
+            labels: labelNames,
+            datasets: [{
+                data: labelCounts,
+                backgroundColor: colors,
+                borderWidth: 2,
+                borderColor: '#ffffff'
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Email Labels Distribution'
+                },
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+}
+
+function displayReadUnreadChart(overview) {
+    const ctx = document.getElementById('readUnreadChart');
+    if (!ctx) return;
+    
+    chartInstances['readUnreadChart'] = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Read', 'Unread'],
+            datasets: [{
+                data: [overview.total_emails - overview.unread_emails, overview.unread_emails],
+                backgroundColor: ['#10b981', '#ef4444'],
+                borderWidth: 2,
+                borderColor: '#ffffff'
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Read vs Unread Emails'
+                },
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+}
+
+function displayHourlyChart(hourlyData) {
+    const ctx = document.getElementById('hourlyChart');
+    if (!ctx) return;
+    
+    const hours = Array.from({length: 24}, (_, i) => i);
+    const emailCounts = hours.map(hour => {
+        const data = hourlyData.find(item => item.hour == hour);
+        return data ? data.email_count : 0;
+    });
+    
+    chartInstances['hourlyChart'] = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: hours.map(h => `${h}:00`),
+            datasets: [{
+                label: 'Emails',
+                data: emailCounts,
+                backgroundColor: '#3b82f6',
+                borderColor: '#2563eb',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+}
+
+function displayWeeklyChart(dailyData) {
+    const ctx = document.getElementById('weeklyChart');
+    if (!ctx) return;
+    
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const emailCounts = days.map((_, index) => {
+        const data = dailyData.find(item => item.day_of_week == index);
+        return data ? data.email_count : 0;
+    });
+    
+    chartInstances['weeklyChart'] = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: days,
+            datasets: [{
+                label: 'Emails',
+                data: emailCounts,
+                backgroundColor: '#10b981',
+                borderColor: '#059669',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+}
+
+function displayEmailLengthChart(lengthData) {
+    const ctx = document.getElementById('emailLengthChart');
+    if (!ctx) return;
+    
+    const labels = lengthData.map(item => item.length_category);
+    const counts = lengthData.map(item => item.email_count);
+    const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444'];
+    
+    chartInstances['emailLengthChart'] = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Emails',
+                data: counts,
+                backgroundColor: colors,
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+}
+
+function displaySenderStats(topSenders) {
+    const senderStats = document.getElementById('senderStats');
+    
+    senderStats.innerHTML = topSenders.slice(0, 5).map(sender => `
+        <div class="sender-stat-item">
+            <div class="sender-stat-label">${sender.sender}</div>
+            <div class="sender-stat-value">${sender.email_count}</div>
+        </div>
+    `).join('');
+}
+
+function displayCategoryBreakdown(labels) {
+    const categoryBreakdown = document.getElementById('categoryBreakdown');
+    const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4'];
+    
+    categoryBreakdown.innerHTML = labels.slice(0, 6).map((label, index) => `
+        <div class="category-item">
+            <div class="category-name">
+                <div class="category-color" style="background-color: ${colors[index]}"></div>
+                ${label.label}
+            </div>
+            <div class="category-count">${label.email_count}</div>
+        </div>
+    `).join('');
+}
+
+function displayReadStats(overview) {
+    const readStats = document.getElementById('readStats');
+    
+    const formatPercentage = (num) => {
+        const numValue = parseFloat(num);
+        return isNaN(numValue) ? '0.0%' : numValue.toFixed(1) + '%';
+    };
+    
+    readStats.innerHTML = `
+        <div class="read-stat-item">
+            <div class="read-stat-label">Total Emails</div>
+            <div class="read-stat-value">${overview.total_emails.toLocaleString()}</div>
+        </div>
+        <div class="read-stat-item">
+            <div class="read-stat-label">Read Emails</div>
+            <div class="read-stat-value">${(overview.total_emails - overview.unread_emails).toLocaleString()}</div>
+        </div>
+        <div class="read-stat-item">
+            <div class="read-stat-label">Unread Emails</div>
+            <div class="read-stat-value">${overview.unread_emails.toLocaleString()}</div>
+        </div>
+        <div class="read-stat-item">
+            <div class="read-stat-label">Read Rate</div>
+            <div class="read-stat-value">${formatPercentage(overview.read_rate)}</div>
+        </div>
+    `;
+}
+
+function displayStorageMetrics(dashboardData) {
+    const storageMetrics = document.getElementById('storageMetrics');
+    
+    storageMetrics.innerHTML = `
+        <div class="storage-metric-item">
+            <div class="storage-metric-label">Database Size</div>
+            <div class="storage-metric-value">${dashboardData.database_size_pretty || 'Unknown'}</div>
+        </div>
+        <div class="storage-metric-item">
+            <div class="storage-metric-label">Total Emails</div>
+            <div class="storage-metric-value">${dashboardData.total_emails?.toLocaleString() || 'Unknown'}</div>
+        </div>
+        <div class="storage-metric-item">
+            <div class="storage-metric-label">Average Email Size</div>
+            <div class="storage-metric-value">~35 KB</div>
+        </div>
+    `;
+}
+
+function displayPerformanceMetrics(dashboardData) {
+    const performanceMetrics = document.getElementById('performanceMetrics');
+    
+    performanceMetrics.innerHTML = `
+        <div class="performance-metric-item">
+            <div class="performance-metric-label">Last Sync</div>
+            <div class="performance-metric-value">${dashboardData.last_sync_time ? new Date(dashboardData.last_sync_time).toLocaleString() : 'Never'}</div>
+        </div>
+        <div class="performance-metric-item">
+            <div class="performance-metric-label">Sync Status</div>
+            <div class="performance-metric-value">${dashboardData.sync_status || 'Unknown'}</div>
+        </div>
+        <div class="performance-metric-item">
+            <div class="performance-metric-label">Latest Email</div>
+            <div class="performance-metric-value">${dashboardData.latest_email_date ? new Date(dashboardData.latest_email_date).toLocaleDateString() : 'Unknown'}</div>
+        </div>
+    `;
+}
+
+function displaySubjectStats(subjectCategories) {
+    const subjectStats = document.getElementById('subjectStats');
+    
+    subjectStats.innerHTML = subjectCategories.map(category => `
+        <div class="subject-stat-item">
+            <div class="subject-stat-label">${category.subject_category}</div>
+            <div class="subject-stat-value">${category.email_count}</div>
+        </div>
+    `).join('');
+}
+
+function displayAdvancedInsights(overviewData, trendsData, dashboardData) {
+    const insightsGrid = document.getElementById('insightsGrid');
+    
+    const insights = [];
+    
+    // Email volume insight
+    if (trendsData.length > 0) {
+        const avgEmailsPerDay = trendsData.reduce((sum, day) => sum + day.email_count, 0) / trendsData.length;
+        insights.push({
+            title: 'Daily Email Volume',
+            content: `You receive an average of ${avgEmailsPerDay.toFixed(1)} emails per day.`
+        });
+    }
+    
+    // Read rate insight
+    const readRate = parseFloat(overviewData.overview.read_rate);
+    if (readRate > 80) {
+        insights.push({
+            title: 'Excellent Read Rate',
+            content: `You have a ${readRate.toFixed(1)}% read rate, which is excellent!`
+        });
+    } else if (readRate > 60) {
+        insights.push({
+            title: 'Good Read Rate',
+            content: `You have a ${readRate.toFixed(1)}% read rate. Consider setting aside time to catch up on unread emails.`
+        });
+    } else {
+        insights.push({
+            title: 'Email Management',
+            content: `You have a ${readRate.toFixed(1)}% read rate. Consider implementing email management strategies.`
+        });
+    }
+    
+    // Top sender insight
+    if (overviewData.top_senders.length > 0) {
+        const topSender = overviewData.top_senders[0];
+        insights.push({
+            title: 'Most Active Sender',
+            content: `${topSender.sender} sends you the most emails (${topSender.email_count} emails).`
+        });
+    }
+    
+    // Storage insight
+    if (dashboardData.database_size_gb > 10) {
+        insights.push({
+            title: 'Large Email Archive',
+            content: `Your email archive is ${dashboardData.database_size_gb} GB. Consider archiving old emails to save space.`
+        });
+    }
+    
+    insightsGrid.innerHTML = insights.map(insight => `
+        <div class="insight-card">
+            <h4>${insight.title}</h4>
+            <p>${insight.content}</p>
+        </div>
+    `).join('');
+}
+
+// Initialize analytics controls
+function initializeAnalyticsControls() {
+    const timeRangeSelect = document.getElementById('analyticsTimeRange');
+    const refreshBtn = document.getElementById('refreshAnalytics');
+    const exportBtn = document.getElementById('exportAnalytics');
+    
+    if (timeRangeSelect) {
+        timeRangeSelect.addEventListener('change', loadAnalytics);
+    }
+    
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', loadAnalytics);
+    }
+    
+    if (exportBtn) {
+        exportBtn.addEventListener('click', exportAnalyticsData);
+    }
+}
+
+function exportAnalyticsData() {
+    // Implementation for exporting analytics data
+    console.log('📊 Exporting analytics data...');
+    alert('Export functionality will be implemented in the next version.');
 }
 
 // Settings functionality
@@ -2533,6 +2959,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initialize email modal functionality
     initializeEmailModal();
+    
+    // Initialize analytics controls
+    initializeAnalyticsControls();
     
     // Show dashboard by default
     showPage('dashboard');
