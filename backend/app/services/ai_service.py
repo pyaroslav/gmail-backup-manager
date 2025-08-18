@@ -20,11 +20,18 @@ class AIService:
         self.text_classifier = None
         self.summarizer = None
         self.embedding_model = None
-        self._load_models()
+        self._models_loaded = False
+        # Don't load models at startup - load them lazily when needed
+        logger.info("AI Service initialized - models will be loaded on first use")
     
     def _load_models(self):
-        """Load AI models for analysis"""
+        """Load AI models for analysis - lazy loading"""
+        if self._models_loaded:
+            return
+            
         try:
+            logger.info("Loading AI models...")
+            
             # Sentiment analysis
             self.sentiment_analyzer = pipeline(
                 "sentiment-analysis",
@@ -49,6 +56,7 @@ class AIService:
             # Sentence embeddings for semantic search
             self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
             
+            self._models_loaded = True
             logger.info("AI models loaded successfully")
             
         except Exception as e:
@@ -58,6 +66,10 @@ class AIService:
     def analyze_email(self, email: Email) -> Dict:
         """Analyze email content and return insights"""
         try:
+            # Load models if not already loaded
+            if not self._models_loaded:
+                self._load_models()
+            
             # Combine subject and body for analysis
             text_content = f"{email.subject or ''} {email.body_plain or ''}"
             

@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>Gmail Backup Manager</title>
     <link rel="stylesheet" href="styles.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
@@ -215,11 +218,34 @@
                 <div class="email-interface" style="display: flex; height: calc(100vh - 300px); margin-top: 1rem;">
                     <!-- Search Results Panel -->
                     <div class="email-list-panel" style="flex: 1; border-right: 1px solid #e5e7eb; overflow: hidden; display: flex; flex-direction: column;">
+                        <!-- Search Results Toolbar -->
+                        <div class="email-toolbar">
+                            <div class="toolbar-left">
+                                <span class="email-count" id="searchResultCount">0 results</span>
+                            </div>
+                            <div class="toolbar-right">
+                                <span class="selected-count" id="searchSelectedCount">0 selected</span>
+                            </div>
+                        </div>
+                        
                         <div class="search-results" id="searchResults" style="flex: 1; overflow-y: auto;">
                             <div class="text-center text-muted" style="padding: 2rem;">
                                 <i class="fas fa-search" style="font-size: 3rem; color: #d1d5db; margin-bottom: 1rem;"></i>
                                 <p>Enter search terms to find emails</p>
                             </div>
+                        </div>
+                        
+                        <!-- Search Pagination -->
+                        <div class="pagination" id="searchPagination" style="display: none;">
+                            <button class="btn-pagination" id="searchPrevPage" disabled>
+                                <i class="fas fa-chevron-left"></i>
+                                Previous
+                            </button>
+                            <span class="page-info" id="searchPageInfo">Page 1 of 1</span>
+                            <button class="btn-pagination" id="searchNextPage" disabled>
+                                Next
+                                <i class="fas fa-chevron-right"></i>
+                            </button>
                         </div>
                     </div>
                     
@@ -271,6 +297,11 @@
                             <p id="databaseSize">Loading...</p>
                         </div>
                     </div>
+                </div>
+
+                <!-- Current Sync Details -->
+                <div class="sync-details" id="syncInfoContainer" style="display: none;">
+                    <!-- Sync details will be populated by JavaScript -->
                 </div>
 
                 <!-- Sync Options -->
@@ -441,77 +472,7 @@
 
             <!-- Analytics Page -->
             <div class="analytics-page" id="analyticsPage" style="display: none;">
-                <h2>Email Analytics</h2>
-                <div class="analytics-grid">
-                    <div class="chart-card">
-                        <h3>Email Volume Over Time</h3>
-                        <div class="chart-placeholder" id="volumeChart">
-                            <div class="chart-bars">
-                                <div class="bar" style="height: 60%"></div>
-                                <div class="bar" style="height: 80%"></div>
-                                <div class="bar" style="height: 45%"></div>
-                                <div class="bar" style="height: 90%"></div>
-                                <div class="bar" style="height: 70%"></div>
-                                <div class="bar" style="height: 85%"></div>
-                                <div class="bar" style="height: 55%"></div>
-                            </div>
-                            <div class="chart-labels">
-                                <span>Mon</span>
-                                <span>Tue</span>
-                                <span>Wed</span>
-                                <span>Thu</span>
-                                <span>Fri</span>
-                                <span>Sat</span>
-                                <span>Sun</span>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="chart-card">
-                        <h3>Email Categories</h3>
-                        <div class="pie-chart" id="categoryChart">
-                            <div class="pie-segment" style="--percentage: 40; --color: #3b82f6;"></div>
-                            <div class="pie-segment" style="--percentage: 25; --color: #10b981;"></div>
-                            <div class="pie-segment" style="--percentage: 20; --color: #f59e0b;"></div>
-                            <div class="pie-segment" style="--percentage: 15; --color: #ef4444;"></div>
-                        </div>
-                        <div class="chart-legend">
-                            <div class="legend-item">
-                                <span class="legend-color" style="background: #3b82f6;"></span>
-                                <span>Work (40%)</span>
-                            </div>
-                            <div class="legend-item">
-                                <span class="legend-color" style="background: #10b981;"></span>
-                                <span>Personal (25%)</span>
-                            </div>
-                            <div class="legend-item">
-                                <span class="legend-color" style="background: #f59e0b;"></span>
-                                <span>News (20%)</span>
-                            </div>
-                            <div class="legend-item">
-                                <span class="legend-color" style="background: #ef4444;"></span>
-                                <span>Other (15%)</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="analytics-stats">
-                    <div class="stat-item">
-                        <h4>Average Response Time</h4>
-                        <p>2.5 hours</p>
-                    </div>
-                    <div class="stat-item">
-                        <h4>Most Active Sender</h4>
-                        <p>john@example.com</p>
-                    </div>
-                    <div class="stat-item">
-                        <h4>Busiest Day</h4>
-                        <p>Tuesday</p>
-                    </div>
-                    <div class="stat-item">
-                        <h4>Storage Used</h4>
-                        <p>1.2 GB</p>
-                    </div>
-                </div>
+                <!-- Content will be dynamically loaded by JavaScript -->
             </div>
 
             <!-- Settings Page -->
@@ -618,6 +579,9 @@
         <p>Loading...</p>
     </div>
 
-    <script src="script.js"></script>
+    <!-- Note: Frontend timeout is 3 seconds, but sync-status endpoint takes ~5 seconds. 
+         The endpoint will timeout and fall back to email-count endpoint which doesn't have sync details. -->
+    <!-- Real-time sync monitoring with improved activity detection -->
+            <script src="script.js?v=2025-08-18-14-30"></script>
 </body>
 </html>

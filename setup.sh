@@ -85,7 +85,7 @@ http {
     }
 
     upstream frontend {
-        server frontend:3001;
+        server frontend:3002;
     }
 
     server {
@@ -157,7 +157,7 @@ echo "2. Start the application:"
 echo "   docker-compose up -d"
 echo ""
 echo "3. Access the application:"
-echo "   - Frontend: http://localhost:3001"
+echo "   - Frontend: http://localhost:3002"
 echo "   - Backend API: http://localhost:8000"
 echo "   - API Documentation: http://localhost:8000/docs"
 echo ""

@@ -9,14 +9,18 @@ services:
       POSTGRES_DB: gmail_backup
       POSTGRES_USER: gmail_user
       POSTGRES_PASSWORD: gmail_password
+      # PostgreSQL configuration for better performance during sync
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./database/postgresql.conf:/etc/postgresql/postgresql.conf
     ports:
       - "5432:5432"
     networks:
       - gmail-backup-network
     restart: unless-stopped
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
 
   # Redis for caching and background tasks
   redis:
@@ -56,21 +60,27 @@ services:
     restart: unless-stopped
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
-  # Frontend
+  # Node.js Frontend Server (Direct Database Access)
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.node
     container_name: gmail-backup-frontend
     environment:
-      - REACT_APP_API_URL=http://localhost:8000/api/v1
+      - NODE_ENV=production
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=gmail_backup
+      - DB_USER=gmail_user
+      - DB_PASSWORD=gmail_password
     ports:
-      - "3001:3001"
+      - "3002:3002"
     depends_on:
-      - backend
+      - postgres
     networks:
       - gmail-backup-network
     restart: unless-stopped
+    command: npm start
 
   # Nginx reverse proxy
   nginx:

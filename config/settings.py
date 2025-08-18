@@ -72,8 +72,8 @@ settings = Settings()
 if os.getenv("ENVIRONMENT") == "production":
     settings.DATABASE_URL = os.getenv("DATABASE_URL", settings.DATABASE_URL)
     settings.SECRET_KEY = os.getenv("SECRET_KEY", settings.SECRET_KEY)
-    settings.CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3001")
+    settings.CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3002")
     settings.LOG_LEVEL = "WARNING"
 elif os.getenv("ENVIRONMENT") == "development":
     settings.LOG_LEVEL = "DEBUG"
-    settings.CORS_ORIGINS = "http://localhost:3001,http://127.0.0.1:3001"
+    settings.CORS_ORIGINS = "http://localhost:3002,http://127.0.0.1:3002"

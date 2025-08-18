@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List
-from ..models.database import get_db
+from ..models.database import get_db, SessionLocal, FrontendSessionLocal
 from ..models.user import User
 from ..models.email import Email, EmailLabel, EmailAttachment
 from ..services.auth_service import get_test_user
@@ -14,6 +14,11 @@ import os
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
+from sqlalchemy import text
+from pathlib import Path
+import psycopg2
+from psycopg2.extras import RealDictCursor
+# import psutil  # Temporarily commented out to fix startup issue
 
 logger = logging.getLogger(__name__)
 
@@ -1115,6 +1120,1694 @@ async def get_background_sync_status():
         }
     except Exception as e:
         logger.error(f"Error getting background sync status: {e}")
+        return {
+            "error": str(e),
+            "status": "failed"
+        }
+
+@router.get("/analytics/overview")
+async def get_test_analytics_overview(
+    days: int = 30,
+    db: Session = Depends(get_db)
+):
+    """Get test analytics overview (no authentication required)"""
+    try:
+        from sqlalchemy import func
+        from datetime import datetime, timedelta
+        
+        # Calculate date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+        
+        # Get emails in date range
+        emails_in_period = db.query(Email).filter(
+            Email.date_received >= start_date,
+            Email.date_received <= end_date
+        ).count()
+        
+        # Get total emails
+        total_emails = db.query(Email).count()
+        
+        # Get read/unread counts
+        read_emails = db.query(Email).filter(Email.is_read == True).count()
+        unread_emails = db.query(Email).filter(Email.is_read == False).count()
+        
+        # Get starred/important counts
+        starred_emails = db.query(Email).filter(Email.is_starred == True).count()
+        important_emails = db.query(Email).filter(Email.is_important == True).count()
+        
+        # Get category distribution
+        category_stats = db.query(
+            Email.category,
+            func.count(Email.id).label('count')
+        ).group_by(Email.category).all()
+        
+        category_distribution = {}
+        for category, count in category_stats:
+            cat_name = category or "uncategorized"
+            category_distribution[cat_name] = count
+        
+        # Get sentiment distribution
+        sentiment_stats = db.query(
+            Email.sentiment_score,
+            func.count(Email.id).label('count')
+        ).group_by(Email.sentiment_score).all()
+        
+        sentiment_distribution = {"positive": 0, "neutral": 0, "negative": 0}
+        for sentiment, count in sentiment_stats:
+            if sentiment == 1:
+                sentiment_distribution["positive"] = count
+            elif sentiment == -1:
+                sentiment_distribution["negative"] = count
+            else:
+                sentiment_distribution["neutral"] = count
+        
+        # Get top senders
+        sender_stats = db.query(
+            Email.sender,
+            func.count(Email.id).label('count')
+        ).group_by(Email.sender).order_by(
+            func.count(Email.id).desc()
+        ).limit(10).all()
+        
+        top_senders = []
+        for sender, count in sender_stats:
+            if sender:  # Skip None senders
+                top_senders.append({
+                    "sender": sender,
+                    "count": count
+                })
+        
+        return {
+            "period_days": days,
+            "total_emails": total_emails,
+            "emails_in_period": emails_in_period,
+            "read_emails": read_emails,
+            "unread_emails": unread_emails,
+            "starred_emails": starred_emails,
+            "important_emails": important_emails,
+            "category_distribution": category_distribution,
+            "sentiment_distribution": sentiment_distribution,
+            "top_senders": top_senders
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting test analytics overview: {e}")
+        return {
+            "error": str(e),
+            "status": "error"
+        }
+
+@router.get("/analytics/statistics")
+async def get_test_statistics(db: Session = Depends(get_db)):
+    """Get comprehensive test statistics (no authentication required)"""
+    try:
+        from sqlalchemy import func
+        from datetime import datetime, timedelta
+        
+        # Basic counts
+        total_emails = db.query(Email).count()
+        read_emails = db.query(Email).filter(Email.is_read == True).count()
+        unread_emails = db.query(Email).filter(Email.is_read == False).count()
+        starred_emails = db.query(Email).filter(Email.is_starred == True).count()
+        important_emails = db.query(Email).filter(Email.is_important == True).count()
+        
+        # Date range analysis
+        oldest_email = db.query(Email.date_received).order_by(Email.date_received.asc()).first()
+        newest_email = db.query(Email.date_received).order_by(Email.date_received.desc()).first()
+        
+        # Yearly breakdown
+        yearly_counts = db.query(
+            func.extract('year', Email.date_received).label('year'),
+            func.count(Email.id).label('count')
+        ).filter(
+            Email.date_received.isnot(None)
+        ).group_by(
+            func.extract('year', Email.date_received)
+        ).order_by(
+            func.extract('year', Email.date_received)
+        ).all()
+        
+        # Monthly breakdown (last 12 months)
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=365)
+        
+        monthly_counts = db.query(
+            func.extract('year', Email.date_received).label('year'),
+            func.extract('month', Email.date_received).label('month'),
+            func.count(Email.id).label('count')
+        ).filter(
+            Email.date_received >= start_date,
+            Email.date_received <= end_date
+        ).group_by(
+            func.extract('year', Email.date_received),
+            func.extract('month', Email.date_received)
+        ).order_by(
+            func.extract('year', Email.date_received),
+            func.extract('month', Email.date_received)
+        ).all()
+        
+        # Sender analysis
+        unique_senders = db.query(func.count(func.distinct(Email.sender))).scalar()
+        top_senders = db.query(
+            Email.sender,
+            func.count(Email.id).label('count')
+        ).group_by(Email.sender).order_by(
+            func.count(Email.id).desc()
+        ).limit(20).all()
+        
+        # Category analysis
+        categories = db.query(
+            Email.category,
+            func.count(Email.id).label('count')
+        ).group_by(Email.category).order_by(
+            func.count(Email.id).desc()
+        ).all()
+        
+        # Sentiment analysis
+        sentiment_breakdown = db.query(
+            Email.sentiment_score,
+            func.count(Email.id).label('count')
+        ).group_by(Email.sentiment_score).all()
+        
+        # Priority analysis
+        priority_breakdown = db.query(
+            Email.priority_score,
+            func.count(Email.id).label('count')
+        ).group_by(Email.priority_score).order_by(Email.priority_score).all()
+        
+        return {
+            "total_emails": total_emails,
+            "read_emails": read_emails,
+            "unread_emails": unread_emails,
+            "starred_emails": starred_emails,
+            "important_emails": important_emails,
+            "read_rate": (read_emails / total_emails * 100) if total_emails > 0 else 0,
+            "date_range": {
+                "oldest_email": oldest_email[0].isoformat() if oldest_email and oldest_email[0] else None,
+                "newest_email": newest_email[0].isoformat() if newest_email and newest_email[0] else None
+            },
+            "yearly_breakdown": [
+                {"year": int(year), "count": count} 
+                for year, count in yearly_counts
+            ],
+            "monthly_breakdown": [
+                {"year": int(year), "month": int(month), "count": count}
+                for year, month, count in monthly_counts
+            ],
+            "sender_analysis": {
+                "unique_senders": unique_senders,
+                "top_senders": [
+                    {"sender": sender, "count": count}
+                    for sender, count in top_senders if sender
+                ]
+            },
+            "categories": [
+                {"category": category or "uncategorized", "count": count}
+                for category, count in categories
+            ],
+            "sentiment_breakdown": [
+                {"sentiment": sentiment, "count": count}
+                for sentiment, count in sentiment_breakdown
+            ],
+            "priority_breakdown": [
+                {"priority": priority, "count": count}
+                for priority, count in priority_breakdown
+            ]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting test statistics: {e}")
+        return {
+            "error": str(e),
+            "status": "error"
+        }
+
+@router.get("/analytics/trends")
+async def get_test_trends(
+    days: int = 30,
+    db: Session = Depends(get_db)
+):
+    """Get email trends over time (no authentication required)"""
+    try:
+        from datetime import datetime, timedelta
+        
+        # Calculate date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+        
+        # Get emails in date range
+        emails = db.query(Email).filter(
+            Email.date_received >= start_date,
+            Email.date_received <= end_date
+        ).order_by(Email.date_received).all()
+        
+        # Group by date
+        daily_stats = {}
+        for email in emails:
+            if email.date_received:
+                date_key = email.date_received.date().isoformat()
+                if date_key not in daily_stats:
+                    daily_stats[date_key] = {
+                        "total": 0,
+                        "read": 0,
+                        "unread": 0,
+                        "starred": 0,
+                        "important": 0
+                    }
+                
+                daily_stats[date_key]["total"] += 1
+                if email.is_read:
+                    daily_stats[date_key]["read"] += 1
+                else:
+                    daily_stats[date_key]["unread"] += 1
+                
+                if email.is_starred:
+                    daily_stats[date_key]["starred"] += 1
+                
+                if email.is_important:
+                    daily_stats[date_key]["important"] += 1
+        
+        # Convert to list format
+        trends = []
+        for date_key in sorted(daily_stats.keys()):
+            trends.append({
+                "date": date_key,
+                **daily_stats[date_key]
+            })
+        
+        return {"trends": trends}
+        
+    except Exception as e:
+        logger.error(f"Error getting test trends: {e}")
+        return {
+            "error": str(e),
+            "status": "error"
+        }
+
+@router.get("/analytics/activity")
+async def get_test_activity(
+    days: int = 7,
+    db: Session = Depends(get_db)
+):
+    """Get email activity patterns (no authentication required)"""
+    try:
+        from datetime import datetime, timedelta
+        
+        # Calculate date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+        
+        # Get emails in date range
+        emails = db.query(Email).filter(
+            Email.date_received >= start_date,
+            Email.date_received <= end_date
+        ).all()
+        
+        # Analyze by hour of day
+        hourly_activity = {}
+        for i in range(24):
+            hourly_activity[i] = 0
+        
+        for email in emails:
+            if email.date_received:
+                hour = email.date_received.hour
+                hourly_activity[hour] += 1
+        
+        # Analyze by day of week
+        daily_activity = {}
+        day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        for i in range(7):
+            daily_activity[day_names[i]] = 0
+        
+        for email in emails:
+            if email.date_received:
+                day = email.date_received.weekday()
+                daily_activity[day_names[day]] += 1
+        
+        # Get most active hours
+        most_active_hours = sorted(hourly_activity.items(), key=lambda x: x[1], reverse=True)[:5]
+        
+        # Get most active days
+        most_active_days = sorted(daily_activity.items(), key=lambda x: x[1], reverse=True)
+        
+        return {
+            "hourly_activity": [{"hour": hour, "count": count} for hour, count in hourly_activity.items()],
+            "daily_activity": [{"day": day, "count": count} for day, count in daily_activity.items()],
+            "most_active_hours": [{"hour": hour, "count": count} for hour, count in most_active_hours],
+            "most_active_days": [{"day": day, "count": count} for day, count in most_active_days]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting test activity: {e}")
+        return {
+            "error": str(e),
+            "status": "error"
+        }
+
+@router.get("/analytics/performance")
+async def get_test_performance(db: Session = Depends(get_db)):
+    """Get system performance metrics (no authentication required)"""
+    try:
+        from sqlalchemy import func
+        
+        # Get basic counts
+        total_emails = db.query(Email).count()
+        
+        # Get emails with sentiment analysis
+        processed_emails = db.query(Email).filter(
+            Email.sentiment_score.isnot(None)
+        ).count()
+        
+        # Get emails with priority scores
+        priority_processed = db.query(Email).filter(
+            Email.priority_score.isnot(None)
+        ).count()
+        
+        # Get emails with categories
+        categorized_emails = db.query(Email).filter(
+            Email.category.isnot(None)
+        ).count()
+        
+        # Calculate processing rates
+        sentiment_rate = (processed_emails / total_emails * 100) if total_emails > 0 else 0
+        priority_rate = (priority_processed / total_emails * 100) if total_emails > 0 else 0
+        categorization_rate = (categorized_emails / total_emails * 100) if total_emails > 0 else 0
+        
+        # Get average email size (character count)
+        avg_email_size = db.query(
+            func.avg(func.length(Email.body_plain) + func.length(Email.body_html or ''))
+        ).scalar() or 0
+        
+        # Get emails by year for storage estimation
+        yearly_counts = db.query(
+            func.extract('year', Email.date_received).label('year'),
+            func.count(Email.id).label('count')
+        ).filter(
+            Email.date_received.isnot(None)
+        ).group_by(
+            func.extract('year', Email.date_received)
+        ).order_by(
+            func.extract('year', Email.date_received)
+        ).all()
+        
+        return {
+            "total_emails": total_emails,
+            "processed_emails": {
+                "sentiment_analysis": processed_emails,
+                "priority_scoring": priority_processed,
+                "categorization": categorized_emails
+            },
+            "processing_rates": {
+                "sentiment_analysis": round(sentiment_rate, 2),
+                "priority_scoring": round(priority_rate, 2),
+                "categorization": round(categorization_rate, 2)
+            },
+            "avg_email_size_chars": round(avg_email_size, 0),
+            "yearly_distribution": [
+                {"year": int(year), "count": count}
+                for year, count in yearly_counts
+            ]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting test performance: {e}")
+        return {
+            "error": str(e),
+            "status": "error"
+        }
+
+@router.get("/analytics/insights")
+async def get_test_insights(db: Session = Depends(get_db)):
+    """Get AI-generated insights about email patterns (no authentication required)"""
+    try:
+        from datetime import datetime, timedelta
+        
+        # Get recent emails for analysis
+        recent_emails = db.query(Email).order_by(
+            Email.date_received.desc()
+        ).limit(1000).all()
+        
+        insights = []
+        
+        # Analyze email volume trends
+        if len(recent_emails) > 10:
+            recent_count = len([e for e in recent_emails[:100]])
+            older_count = len([e for e in recent_emails[100:200]])
+            
+            if recent_count > older_count * 1.5:
+                insights.append({
+                    "type": "volume_increase",
+                    "title": "Email Volume Increase",
+                    "description": f"Recent email volume is {round((recent_count/older_count)*100)}% higher than previous period",
+                    "severity": "info",
+                    "icon": "📈"
+                })
+        
+        # Analyze unread email patterns
+        unread_emails = [e for e in recent_emails if not e.is_read]
+        unread_percentage = (len(unread_emails) / len(recent_emails)) * 100
+        if unread_percentage > 30:
+            insights.append({
+                "type": "high_unread",
+                "title": "High Unread Email Rate",
+                "description": f"{unread_percentage:.1f}% of recent emails are unread ({len(unread_emails)} emails)",
+                "severity": "warning",
+                "icon": "📬"
+            })
+        
+        # Analyze sender patterns
+        sender_counts = {}
+        for email in recent_emails:
+            sender = email.sender.split('<')[0].strip() if email.sender else "Unknown"
+            sender_counts[sender] = sender_counts.get(sender, 0) + 1
+        
+        top_sender = max(sender_counts.items(), key=lambda x: x[1])
+        if top_sender[1] > len(recent_emails) * 0.3:
+            insights.append({
+                "type": "dominant_sender",
+                "title": "Dominant Sender",
+                "description": f"{top_sender[0]} accounts for {round((top_sender[1]/len(recent_emails))*100)}% of recent emails",
+                "severity": "info",
+                "icon": "👤"
+            })
+        
+        # Analyze time patterns
+        hourly_counts = {}
+        for email in recent_emails:
+            if email.date_received:
+                hour = email.date_received.hour
+                hourly_counts[hour] = hourly_counts.get(hour, 0) + 1
+        
+        if hourly_counts:
+            peak_hour = max(hourly_counts.items(), key=lambda x: x[1])
+            insights.append({
+                "type": "peak_activity",
+                "title": "Peak Email Activity",
+                "description": f"Most emails arrive at {peak_hour[0]}:00 ({peak_hour[1]} emails in recent period)",
+                "severity": "info",
+                "icon": "⏰"
+            })
+        
+        # Analyze important emails
+        important_emails = [e for e in recent_emails if e.is_important]
+        if important_emails:
+            important_percentage = (len(important_emails) / len(recent_emails)) * 100
+            insights.append({
+                "type": "important_emails",
+                "title": "Important Email Volume",
+                "description": f"{important_percentage:.1f}% of recent emails are marked as important",
+                "severity": "info",
+                "icon": "⭐"
+            })
+        
+        # Analyze date range
+        if recent_emails:
+            oldest_recent = min(e.date_received for e in recent_emails if e.date_received)
+            newest_recent = max(e.date_received for e in recent_emails if e.date_received)
+            if oldest_recent and newest_recent:
+                days_span = (newest_recent - oldest_recent).days
+                insights.append({
+                    "type": "date_span",
+                    "title": "Email Time Span",
+                    "description": f"Recent emails span {days_span} days ({oldest_recent.strftime('%Y-%m-%d')} to {newest_recent.strftime('%Y-%m-%d')})",
+                    "severity": "info",
+                    "icon": "📅"
+                })
+        
+        return {"insights": insights}
+        
+    except Exception as e:
+        logger.error(f"Error getting test insights: {e}")
+        return {
+            "error": str(e),
+            "status": "error"
+        }
+
+@router.get("/analytics/domains")
+async def get_test_domain_analysis(db: Session = Depends(get_db)):
+    """Get domain analysis for emails (no authentication required)"""
+    try:
+        from sqlalchemy import func
+        import re
+        
+        # Get all senders
+        senders = db.query(Email.sender).filter(Email.sender.isnot(None)).all()
+        
+        # Extract domains
+        domain_counts = {}
+        domain_emails = {}
+        
+        for (sender,) in senders:
+            # Extract domain from email address
+            domain_match = re.search(r'@([^>]+)', sender)
+            if domain_match:
+                domain = domain_match.group(1).lower()
+                domain_counts[domain] = domain_counts.get(domain, 0) + 1
+                
+                if domain not in domain_emails:
+                    domain_emails[domain] = []
+                domain_emails[domain].append(sender)
+        
+        # Get top domains
+        top_domains = sorted(domain_counts.items(), key=lambda x: x[1], reverse=True)[:20]
+        
+        # Analyze domain types
+        domain_types = {
+            "social_media": ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "facebook.com", "twitter.com"],
+            "shopping": ["amazon.com", "ebay.com", "etsy.com", "shopify.com", "walmart.com", "target.com"],
+            "finance": ["chase.com", "bankofamerica.com", "wellsfargo.com", "capitalone.com", "usbank.com"],
+            "news": ["cnn.com", "bbc.com", "nytimes.com", "washingtonpost.com", "reuters.com"],
+            "tech": ["google.com", "microsoft.com", "apple.com", "github.com", "stackoverflow.com"]
+        }
+        
+        domain_categories = {}
+        for domain, count in domain_counts.items():
+            category = "other"
+            for cat, domains in domain_types.items():
+                if any(d in domain for d in domains):
+                    category = cat
+                    break
+            domain_categories[category] = domain_categories.get(category, 0) + count
+        
+        # Get domain statistics
+        domain_stats = []
+        for domain, count in top_domains:
+            # Get read rate for this domain
+            domain_emails_list = domain_emails[domain]
+            read_count = db.query(Email).filter(
+                Email.sender.in_(domain_emails_list),
+                Email.is_read == True
+            ).count()
+            read_rate = (read_count / count * 100) if count > 0 else 0
+            
+            domain_stats.append({
+                "domain": domain,
+                "count": count,
+                "read_rate": round(read_rate, 1),
+                "percentage": round((count / sum(domain_counts.values())) * 100, 1)
+            })
+        
+        return {
+            "total_domains": len(domain_counts),
+            "top_domains": domain_stats,
+            "domain_categories": [
+                {"category": cat, "count": count}
+                for cat, count in domain_categories.items()
+            ]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting test domain analysis: {e}")
+        return {
+            "error": str(e),
+            "status": "error"
+        }
+
+@router.get("/analytics/trends-detailed")
+async def get_test_detailed_trends(
+    days: int = 90,
+    db: Session = Depends(get_db)
+):
+    """Get detailed email trends analysis (no authentication required)"""
+    try:
+        from datetime import datetime, timedelta
+        from sqlalchemy import func
+        
+        # Calculate date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+        
+        # Get emails in date range
+        emails = db.query(Email).filter(
+            Email.date_received >= start_date,
+            Email.date_received <= end_date
+        ).order_by(Email.date_received).all()
+        
+        # Weekly trends
+        weekly_stats = {}
+        for email in emails:
+            if email.date_received:
+                week_start = email.date_received - timedelta(days=email.date_received.weekday())
+                week_key = week_start.strftime('%Y-%W')
+                
+                if week_key not in weekly_stats:
+                    weekly_stats[week_key] = {
+                        "week_start": week_start,
+                        "total": 0,
+                        "read": 0,
+                        "unread": 0,
+                        "important": 0,
+                        "starred": 0
+                    }
+                
+                weekly_stats[week_key]["total"] += 1
+                if email.is_read:
+                    weekly_stats[week_key]["read"] += 1
+                else:
+                    weekly_stats[week_key]["unread"] += 1
+                
+                if email.is_important:
+                    weekly_stats[week_key]["important"] += 1
+                
+                if email.is_starred:
+                    weekly_stats[week_key]["starred"] += 1
+        
+        # Convert to list and sort
+        weekly_trends = []
+        for week_key, stats in sorted(weekly_stats.items()):
+            weekly_trends.append({
+                "week": week_key,
+                "week_start": stats["week_start"].strftime('%Y-%m-%d'),
+                **stats
+            })
+        
+        # Monthly trends
+        monthly_stats = {}
+        for email in emails:
+            if email.date_received:
+                month_key = email.date_received.strftime('%Y-%m')
+                
+                if month_key not in monthly_stats:
+                    monthly_stats[month_key] = {
+                        "total": 0,
+                        "read": 0,
+                        "unread": 0,
+                        "important": 0,
+                        "starred": 0
+                    }
+                
+                monthly_stats[month_key]["total"] += 1
+                if email.is_read:
+                    monthly_stats[month_key]["read"] += 1
+                else:
+                    monthly_stats[month_key]["unread"] += 1
+                
+                if email.is_important:
+                    monthly_stats[month_key]["important"] += 1
+                
+                if email.is_starred:
+                    monthly_stats[month_key]["starred"] += 1
+        
+        # Convert to list and sort
+        monthly_trends = []
+        for month_key, stats in sorted(monthly_stats.items()):
+            monthly_trends.append({
+                "month": month_key,
+                **stats
+            })
+        
+        # Calculate growth rates
+        if len(weekly_trends) >= 2:
+            recent_week = weekly_trends[-1]["total"]
+            previous_week = weekly_trends[-2]["total"]
+            weekly_growth = ((recent_week - previous_week) / previous_week * 100) if previous_week > 0 else 0
+        else:
+            weekly_growth = 0
+        
+        if len(monthly_trends) >= 2:
+            recent_month = monthly_trends[-1]["total"]
+            previous_month = monthly_trends[-2]["total"]
+            monthly_growth = ((recent_month - previous_month) / previous_month * 100) if previous_month > 0 else 0
+        else:
+            monthly_growth = 0
+        
+        return {
+            "period_days": days,
+            "total_emails_in_period": len(emails),
+            "weekly_trends": weekly_trends,
+            "monthly_trends": monthly_trends,
+            "growth_rates": {
+                "weekly_growth": round(weekly_growth, 1),
+                "monthly_growth": round(monthly_growth, 1)
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting test detailed trends: {e}")
+        return {
+            "error": str(e),
+            "status": "error"
+        }
+
+@router.get("/analytics/categories")
+async def get_test_categories(db: Session = Depends(get_db)):
+    """Get email categories analytics (no authentication required)"""
+    try:
+        from sqlalchemy import func
+        
+        # Get category distribution
+        category_stats = db.query(
+            Email.category,
+            func.count(Email.id).label('count'),
+            func.avg(Email.sentiment_score).label('avg_sentiment'),
+            func.avg(Email.priority_score).label('avg_priority')
+        ).group_by(Email.category).all()
+        
+        categories = []
+        for cat, count, avg_sentiment, avg_priority in category_stats:
+            categories.append({
+                "category": cat or "uncategorized",
+                "count": count,
+                "avg_sentiment": float(avg_sentiment) if avg_sentiment else 0,
+                "avg_priority": float(avg_priority) if avg_priority else 0
+            })
+        
+        return {"categories": categories}
+        
+    except Exception as e:
+        logger.error(f"Error getting test categories: {e}")
+        return {
+            "error": str(e),
+            "status": "error"
+        }
+
+@router.get("/analytics/senders")
+async def get_test_senders(
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db)
+):
+    """Get sender analytics (no authentication required)"""
+    try:
+        from sqlalchemy import func
+        
+        # Get top senders with basic stats
+        sender_stats = db.query(
+            Email.sender,
+            func.count(Email.id).label('count')
+        ).group_by(Email.sender).order_by(
+            func.count(Email.id).desc()
+        ).limit(limit).all()
+        
+        senders = []
+        for sender, count in sender_stats:
+            if sender and sender.strip():  # Skip None and empty senders
+                # Get read count for this sender
+                read_count = db.query(Email).filter(
+                    Email.sender == sender,
+                    Email.is_read == True
+                ).count()
+                
+                senders.append({
+                    "sender": sender,
+                    "count": count,
+                    "avg_sentiment": 0,  # Placeholder
+                    "avg_priority": 0,   # Placeholder
+                    "read_count": read_count,
+                    "unread_count": count - read_count,
+                    "read_rate": (read_count / count * 100) if count > 0 else 0
+                })
+        
+        return {"senders": senders}
+        
+    except Exception as e:
+        logger.error(f"Error getting test senders: {e}")
+        return {
+            "error": str(e),
+            "status": "error"
+        }
+
+@router.get("/analytics/sentiment")
+async def get_test_sentiment(db: Session = Depends(get_db)):
+    """Get sentiment analysis insights (no authentication required)"""
+    try:
+        from sqlalchemy import func
+        
+        # Get sentiment distribution
+        sentiment_stats = db.query(
+            Email.sentiment_score,
+            func.count(Email.id).label('count')
+        ).group_by(Email.sentiment_score).all()
+        
+        sentiment_data = {
+            "positive": 0,
+            "neutral": 0,
+            "negative": 0,
+            "total": 0
+        }
+        
+        for sentiment, count in sentiment_stats:
+            sentiment_data["total"] += count
+            if sentiment == 1:
+                sentiment_data["positive"] = count
+            elif sentiment == -1:
+                sentiment_data["negative"] = count
+            else:
+                sentiment_data["neutral"] = count
+        
+        # Calculate percentages
+        if sentiment_data["total"] > 0:
+            sentiment_data["positive_percent"] = (sentiment_data["positive"] / sentiment_data["total"]) * 100
+            sentiment_data["neutral_percent"] = (sentiment_data["neutral"] / sentiment_data["total"]) * 100
+            sentiment_data["negative_percent"] = (sentiment_data["negative"] / sentiment_data["total"]) * 100
+        else:
+            sentiment_data["positive_percent"] = 0
+            sentiment_data["neutral_percent"] = 0
+            sentiment_data["negative_percent"] = 0
+        
+        return {"sentiment": sentiment_data}
+        
+    except Exception as e:
+        logger.error(f"Error getting test sentiment: {e}")
+        return {
+            "error": str(e),
+            "status": "error"
+        }
+
+@router.get("/analytics/priority")
+async def get_test_priority(db: Session = Depends(get_db)):
+    """Get priority analysis insights (no authentication required)"""
+    try:
+        from sqlalchemy import func
+        
+        # Get priority distribution
+        priority_stats = db.query(
+            Email.priority_score,
+            func.count(Email.id).label('count')
+        ).group_by(Email.priority_score).order_by(Email.priority_score).all()
+        
+        priority_data = {
+            "high_priority": 0,  # 8-10
+            "medium_priority": 0,  # 4-7
+            "low_priority": 0,  # 1-3
+            "total": 0,
+            "distribution": []
+        }
+        
+        for priority, count in priority_stats:
+            priority_data["total"] += count
+            priority_data["distribution"].append({
+                "priority": priority,
+                "count": count
+            })
+            
+            if priority is not None:
+                if priority >= 8:
+                    priority_data["high_priority"] += count
+                elif priority >= 4:
+                    priority_data["medium_priority"] += count
+                else:
+                    priority_data["low_priority"] += count
+            else:
+                # Handle emails without priority scores
+                priority_data["low_priority"] += count
+        
+        # Calculate percentages
+        if priority_data["total"] > 0:
+            priority_data["high_priority_percent"] = (priority_data["high_priority"] / priority_data["total"]) * 100
+            priority_data["medium_priority_percent"] = (priority_data["medium_priority"] / priority_data["total"]) * 100
+            priority_data["low_priority_percent"] = (priority_data["low_priority"] / priority_data["total"]) * 100
+        else:
+            priority_data["high_priority_percent"] = 0
+            priority_data["medium_priority_percent"] = 0
+            priority_data["low_priority_percent"] = 0
+        
+        return {"priority": priority_data}
+        
+    except Exception as e:
+        logger.error(f"Error getting test priority: {e}")
+        return {
+            "error": str(e),
+            "status": "error"
+        }
+
+@router.get("/sync/fast-status")
+async def get_fast_sync_status(db: Session = Depends(get_db)):
+    """Get fast sync status for frontend use during sync operations"""
+    try:
+        # Get basic info without complex queries
+        total_emails = db.query(Email).count()
+        
+        # Get the first user (simple query)
+        user = db.query(User).first()
+        last_sync = user.last_sync.isoformat() if user and user.last_sync else None
+        
+        return {
+            "total_emails": total_emails,
+            "last_sync": last_sync,
+            "status": "ready",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting fast sync status: {e}")
+        return {
+            "error": str(e),
+            "status": "error",
+            "timestamp": datetime.now().isoformat()
+        }
+
+@router.get("/emails/fast")
+async def get_fast_emails(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db)
+):
+    """Get emails quickly for frontend use during sync operations"""
+    try:
+        # Simple count query
+        total_count = db.query(Email).count()
+        
+        # Simple pagination without complex joins
+        offset = (page - 1) * page_size
+        emails = db.query(Email).order_by(Email.date_received.desc()).offset(offset).limit(page_size).all()
+        
+        # Convert to simple dict format
+        email_list = []
+        for email in emails:
+            email_list.append({
+                "id": email.id,
+                "subject": email.subject or "No Subject",
+                "sender": email.sender or "Unknown",
+                "date_received": email.date_received.isoformat() if email.date_received else None,
+                "is_read": email.is_read,
+                "is_starred": email.is_starred,
+                "body_plain": email.body_plain[:200] + "..." if email.body_plain and len(email.body_plain) > 200 else email.body_plain
+            })
+        
+        return {
+            "emails": email_list,
+            "total_count": total_count,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (total_count + page_size - 1) // page_size
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting fast emails: {e}")
+        return {
+            "emails": [],
+            "total_count": 0,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": 0,
+            "error": str(e)
+        }
+
+@router.get("/search/fast")
+async def fast_search(
+    q: str = Query(..., min_length=1),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=50),
+    db: Session = Depends(get_db)
+):
+    """Fast search for frontend use during sync operations"""
+    try:
+        # Simple search using ILIKE
+        search_term = f"%{q}%"
+        
+        # Count total matches
+        total_count = db.query(Email).filter(
+            Email.subject.ilike(search_term) | 
+            Email.sender.ilike(search_term) |
+            Email.body_plain.ilike(search_term)
+        ).count()
+        
+        # Get paginated results
+        offset = (page - 1) * page_size
+        emails = db.query(Email).filter(
+            Email.subject.ilike(search_term) | 
+            Email.sender.ilike(search_term) |
+            Email.body_plain.ilike(search_term)
+        ).order_by(Email.date_received.desc()).offset(offset).limit(page_size).all()
+        
+        # Convert to simple dict format
+        email_list = []
+        for email in emails:
+            email_list.append({
+                "id": email.id,
+                "subject": email.subject or "No Subject",
+                "sender": email.sender or "Unknown",
+                "date_received": email.date_received.isoformat() if email.date_received else None,
+                "is_read": email.is_read,
+                "is_starred": email.is_starred,
+                "body_plain": email.body_plain[:200] + "..." if email.body_plain and len(email.body_plain) > 200 else email.body_plain
+            })
+        
+        return {
+            "emails": email_list,
+            "total_count": total_count,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (total_count + page_size - 1) // page_size,
+            "search_term": q
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in fast search: {e}")
+        return {
+            "emails": [],
+            "total_count": 0,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": 0,
+            "search_term": q,
+            "error": str(e)
+        }
+
+# Global cache for email count to avoid database locks during sync
+_email_count_cache = {
+    "count": 0,
+    "last_updated": None,
+    "cache_duration": 300  # 5 minutes
+}
+
+def update_email_count_cache(count):
+    """Update the email count cache"""
+    global _email_count_cache
+    _email_count_cache["count"] = count
+    _email_count_cache["last_updated"] = datetime.now()
+
+def get_cached_email_count():
+    """Get email count from cache if valid, otherwise from database"""
+    global _email_count_cache
+    
+    # Check if cache is still valid
+    if (_email_count_cache["last_updated"] and 
+        (datetime.now() - _email_count_cache["last_updated"]).total_seconds() < _email_count_cache["cache_duration"]):
+        return _email_count_cache["count"]
+    
+    # Cache expired or doesn't exist, try to update it
+    try:
+        # Use a very short timeout for database query
+        from sqlalchemy import text
+        db = SessionLocal()
+        try:
+            result = db.execute(text("SELECT COUNT(*) FROM emails")).scalar()
+            update_email_count_cache(result)
+            return result
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error updating email count cache: {e}")
+        # Return cached value even if expired, or 0 if no cache
+        return _email_count_cache["count"] if _email_count_cache["count"] > 0 else 0
+
+@router.get("/sync/cached-status")
+async def get_cached_sync_status():
+    """Get sync status using cached email count to avoid database locks"""
+    try:
+        # Get cached email count
+        total_emails = get_cached_email_count()
+        
+        # Get basic user info (this should be fast)
+        db = SessionLocal()
+        try:
+            user = db.query(User).first()
+            last_sync = user.last_sync.isoformat() if user and user.last_sync else None
+        finally:
+            db.close()
+        
+        return {
+            "total_emails": total_emails,
+            "last_sync": last_sync,
+            "status": "ready",
+            "timestamp": datetime.now().isoformat(),
+            "cache_info": {
+                "cached": _email_count_cache["last_updated"] is not None,
+                "cache_age": (datetime.now() - _email_count_cache["last_updated"]).total_seconds() if _email_count_cache["last_updated"] else None
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting cached sync status: {e}")
+        return {
+            "error": str(e),
+            "status": "error",
+            "timestamp": datetime.now().isoformat(),
+            "total_emails": _email_count_cache["count"] if _email_count_cache["count"] > 0 else 0
+        }
+
+@router.post("/sync/update-cache")
+async def update_email_count_cache_endpoint():
+    """Manually update the email count cache"""
+    try:
+        db = SessionLocal()
+        try:
+            count = db.query(Email).count()
+            update_email_count_cache(count)
+            return {
+                "success": True,
+                "count": count,
+                "timestamp": datetime.now().isoformat()
+            }
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error updating cache: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@router.get("/db/direct-count")
+async def get_direct_email_count():
+    """Get email count directly from database using raw SQL (bypasses all API processing)"""
+    try:
+        # Use raw SQL query like the Docker command with frontend session
+        db = FrontendSessionLocal()
+        try:
+            result = db.execute(text("SELECT COUNT(*) FROM emails")).scalar()
+            return {
+                "total_emails": result,
+                "timestamp": datetime.now().isoformat(),
+                "method": "direct_sql_frontend"
+            }
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error in direct count: {e}")
+        return {
+            "error": str(e),
+            "total_emails": 0,
+            "timestamp": datetime.now().isoformat()
+        }
+
+@router.get("/db/direct-emails")
+async def get_direct_emails(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=50)
+):
+    """Get emails directly from database using raw SQL (bypasses all API processing)"""
+    try:
+        db = FrontendSessionLocal()
+        try:
+            # Get total count
+            total_count = db.execute(text("SELECT COUNT(*) FROM emails")).scalar()
+            
+            # Get paginated emails with minimal processing
+            offset = (page - 1) * page_size
+            emails = db.execute(text(f"""
+                SELECT id, subject, sender, date_received, is_read, is_starred, 
+                       LEFT(body_plain, 200) as body_preview
+                FROM emails 
+                ORDER BY date_received DESC 
+                LIMIT {page_size} OFFSET {offset}
+            """)).fetchall()
+            
+            # Convert to simple dict format
+            email_list = []
+            for email in emails:
+                email_list.append({
+                    "id": email.id,
+                    "subject": email.subject or "No Subject",
+                    "sender": email.sender or "Unknown",
+                    "date_received": email.date_received.isoformat() if email.date_received else None,
+                    "is_read": email.is_read,
+                    "is_starred": email.is_starred,
+                    "body_plain": email.body_preview
+                })
+            
+            return {
+                "emails": email_list,
+                "total_count": total_count,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": (total_count + page_size - 1) // page_size,
+                "method": "direct_sql_frontend"
+            }
+            
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error in direct emails: {e}")
+        return {
+            "emails": [],
+            "total_count": 0,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": 0,
+            "error": str(e)
+        }
+
+@router.get("/db/direct-search")
+async def get_direct_search(
+    q: str = Query(..., min_length=1),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=50)
+):
+    """Search emails directly from database using raw SQL (bypasses all API processing)"""
+    try:
+        db = FrontendSessionLocal()
+        try:
+            # Use ILIKE for case-insensitive search
+            search_term = f"%{q}%"
+            
+            # Get total count
+            total_count = db.execute(text(f"""
+                SELECT COUNT(*) FROM emails 
+                WHERE subject ILIKE '{search_term}' 
+                   OR sender ILIKE '{search_term}' 
+                   OR body_plain ILIKE '{search_term}'
+            """)).scalar()
+            
+            # Get paginated results
+            offset = (page - 1) * page_size
+            emails = db.execute(text(f"""
+                SELECT id, subject, sender, date_received, is_read, is_starred, 
+                       LEFT(body_plain, 200) as body_preview
+                FROM emails 
+                WHERE subject ILIKE '{search_term}' 
+                   OR sender ILIKE '{search_term}' 
+                   OR body_plain ILIKE '{search_term}'
+                ORDER BY date_received DESC 
+                LIMIT {page_size} OFFSET {offset}
+            """)).fetchall()
+            
+            # Convert to simple dict format
+            email_list = []
+            for email in emails:
+                email_list.append({
+                    "id": email.id,
+                    "subject": email.subject or "No Subject",
+                    "sender": email.sender or "Unknown",
+                    "date_received": email.date_received.isoformat() if email.date_received else None,
+                    "is_read": email.is_read,
+                    "is_starred": email.is_starred,
+                    "body_plain": email.body_preview
+                })
+            
+            return {
+                "emails": email_list,
+                "total_count": total_count,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": (total_count + page_size - 1) // page_size,
+                "search_term": q,
+                "method": "direct_sql_frontend"
+            }
+            
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error in direct search: {e}")
+        return {
+            "emails": [],
+            "total_count": 0,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": 0,
+            "search_term": q,
+            "error": str(e)
+        }
+
+@router.get("/db/raw-count")
+async def get_raw_email_count():
+    """Get email count using direct psycopg2 connection (bypasses all ORM and connection pools)"""
+    try:
+        # Direct connection to PostgreSQL
+        conn = psycopg2.connect(
+            host="postgres",
+            database="gmail_backup",
+            user="gmail_user",
+            password="gmail_password",
+            options="-c statement_timeout=10000 -c idle_in_transaction_session_timeout=10000"
+        )
+        
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM emails")
+                result = cur.fetchone()[0]
+                
+            return {
+                "total_emails": result,
+                "timestamp": datetime.now().isoformat(),
+                "method": "raw_psycopg2"
+            }
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Error in raw count: {e}")
+        return {
+            "error": str(e),
+            "total_emails": 0,
+            "timestamp": datetime.now().isoformat()
+        }
+
+@router.get("/db/raw-emails")
+async def get_raw_emails(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=50)
+):
+    """Get emails using direct psycopg2 connection (bypasses all ORM and connection pools)"""
+    try:
+        # Direct connection to PostgreSQL
+        conn = psycopg2.connect(
+            host="postgres",
+            database="gmail_backup",
+            user="gmail_user",
+            password="gmail_password",
+            options="-c statement_timeout=10000 -c idle_in_transaction_session_timeout=10000"
+        )
+        
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Get total count
+                cur.execute("SELECT COUNT(*) FROM emails")
+                total_count = cur.fetchone()['count']
+                
+                # Get paginated emails
+                offset = (page - 1) * page_size
+                cur.execute(f"""
+                    SELECT id, subject, sender, date_received, is_read, is_starred, 
+                           LEFT(body_plain, 200) as body_preview
+                    FROM emails 
+                    ORDER BY date_received DESC 
+                    LIMIT {page_size} OFFSET {offset}
+                """)
+                
+                emails = cur.fetchall()
+                
+                # Convert to list of dicts
+                email_list = []
+                for email in emails:
+                    email_list.append({
+                        "id": email['id'],
+                        "subject": email['subject'] or "No Subject",
+                        "sender": email['sender'] or "Unknown",
+                        "date_received": email['date_received'].isoformat() if email['date_received'] else None,
+                        "is_read": email['is_read'],
+                        "is_starred": email['is_starred'],
+                        "body_plain": email['body_preview']
+                    })
+                
+            return {
+                "emails": email_list,
+                "total_count": total_count,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": (total_count + page_size - 1) // page_size,
+                "method": "raw_psycopg2"
+            }
+            
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Error in raw emails: {e}")
+        return {
+            "emails": [],
+            "total_count": 0,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": 0,
+            "error": str(e)
+        }
+
+@router.get("/db/frontend-count")
+async def get_frontend_email_count():
+    """Get email count using frontend database user (separate from sync user)"""
+    try:
+        # Direct connection to PostgreSQL using frontend user
+        conn = psycopg2.connect(
+            host="postgres",
+            database="gmail_backup",
+            user="frontend_user",
+            password="frontend_password",
+            options="-c statement_timeout=5000 -c idle_in_transaction_session_timeout=5000"
+        )
+        
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM emails")
+                result = cur.fetchone()[0]
+                
+            return {
+                "total_emails": result,
+                "timestamp": datetime.now().isoformat(),
+                "method": "frontend_user"
+            }
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Error in frontend count: {e}")
+        return {
+            "error": str(e),
+            "total_emails": 0,
+            "timestamp": datetime.now().isoformat()
+        }
+
+@router.get("/cache/file-count")
+async def get_file_cache_count():
+    """Get email count from file cache (bypasses database entirely)"""
+    try:
+        cache_file = Path("/app/cache/email_count.json")
+        
+        if cache_file.exists():
+            with open(cache_file, 'r') as f:
+                data = json.load(f)
+                return {
+                    "total_emails": data.get("total_emails", 0),
+                    "timestamp": data.get("timestamp", datetime.now().isoformat()),
+                    "method": "file_cache"
+                }
+        else:
+            # If cache doesn't exist, try to create it from database
+            try:
+                conn = psycopg2.connect(
+                    host="postgres",
+                    database="gmail_backup",
+                    user="gmail_user",
+                    password="gmail_password",
+                    options="-c statement_timeout=10000"
+                )
+                
+                with conn.cursor() as cur:
+                    cur.execute("SELECT COUNT(*) FROM emails")
+                    result = cur.fetchone()[0]
+                
+                # Create cache directory if it doesn't exist
+                cache_file.parent.mkdir(exist_ok=True)
+                
+                # Write to cache file
+                cache_data = {
+                    "total_emails": result,
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+                with open(cache_file, 'w') as f:
+                    json.dump(cache_data, f)
+                
+                return {
+                    "total_emails": result,
+                    "timestamp": cache_data["timestamp"],
+                    "method": "file_cache_created"
+                }
+                
+            except Exception as db_error:
+                logger.error(f"Database error creating cache: {db_error}")
+                return {
+                    "total_emails": 0,
+                    "timestamp": datetime.now().isoformat(),
+                    "method": "file_cache_missing",
+                    "error": "Cache not available and database unreachable"
+                }
+                
+    except Exception as e:
+        logger.error(f"Error in file cache count: {e}")
+        return {
+            "error": str(e),
+            "total_emails": 0,
+            "timestamp": datetime.now().isoformat()
+        }
+
+@router.get("/sync/real-time-status")
+async def get_real_time_sync_status():
+    """Get comprehensive real-time sync status with progress, timing, and logs"""
+    try:
+        from ..services.background_sync_service import background_sync_service
+        from datetime import datetime, timedelta
+        # import psutil  # Temporarily commented out to fix startup issue
+        import os
+        
+        # Get background sync status
+        sync_status = background_sync_service.get_sync_status()
+        db_stats = background_sync_service.get_database_stats()
+        
+        # Get current database email count
+        try:
+            conn = psycopg2.connect(
+                host="postgres",
+                database="gmail_backup",
+                user="gmail_user",
+                password="gmail_password",
+                options="-c statement_timeout=5000"
+            )
+            
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM emails")
+                current_email_count = cur.fetchone()[0]
+                
+                # Get latest email timestamp
+                cur.execute("SELECT MAX(date_received) FROM emails")
+                latest_email_date = cur.fetchone()[0]
+                
+                # Get sync start time from background service
+                cur.execute("SELECT created_at FROM emails ORDER BY created_at DESC LIMIT 1")
+                last_sync_time = cur.fetchone()[0] if cur.fetchone() else None
+                
+            conn.close()
+        except Exception as db_error:
+            logger.error(f"Database error in real-time status: {db_error}")
+            current_email_count = 0
+            latest_email_date = None
+            last_sync_time = None
+        
+        # Calculate sync progress and timing
+        sync_progress = {
+            "is_active": sync_status.get("sync_in_progress", False),
+            "sync_type": "background" if sync_status.get("sync_in_progress") else "none",
+            "start_time": None,
+            "elapsed_time": None,
+            "estimated_completion": None,
+            "progress_percentage": 0,
+            "emails_processed": 0,
+            "emails_per_minute": 0,
+            "current_batch": 0,
+            "total_batches": 0
+        }
+        
+        # If sync is active, calculate timing
+        if sync_progress["is_active"]:
+            # Try to get sync start time from background service stats
+            stats = sync_status.get("stats", {})
+            last_sync_start = stats.get("last_sync_start")
+            
+            if last_sync_start:
+                try:
+                    start_time = datetime.fromisoformat(last_sync_start.replace('Z', '+00:00'))
+                    elapsed = datetime.now(start_time.tzinfo) - start_time
+                    sync_progress["start_time"] = start_time.isoformat()
+                    sync_progress["elapsed_time"] = str(elapsed)
+                    
+                    # Calculate progress based on emails processed
+                    emails_processed = stats.get("emails_synced", 0)
+                    sync_progress["emails_processed"] = emails_processed
+                    
+                    if elapsed.total_seconds() > 0:
+                        emails_per_minute = (emails_processed * 60) / elapsed.total_seconds()
+                        sync_progress["emails_per_minute"] = round(emails_per_minute, 2)
+                        
+                        # Estimate completion (assuming average sync size)
+                        estimated_total = 1000  # Default estimate
+                        if emails_per_minute > 0:
+                            remaining_emails = estimated_total - emails_processed
+                            remaining_minutes = remaining_emails / emails_per_minute
+                            estimated_completion = start_time + timedelta(minutes=remaining_minutes)
+                            sync_progress["estimated_completion"] = estimated_completion.isoformat()
+                            
+                            # Calculate progress percentage
+                            sync_progress["progress_percentage"] = min(100, round((emails_processed / estimated_total) * 100, 1))
+                    
+                except Exception as timing_error:
+                    logger.error(f"Error calculating sync timing: {timing_error}")
+        
+        # Get system information
+        system_info = {
+            "cpu_percent": psutil.cpu_percent(interval=1),
+            "memory_percent": psutil.virtual_memory().percent,
+            "disk_usage": psutil.disk_usage('/').percent if os.path.exists('/') else 0
+        }
+        
+        # Get recent sync logs (last 50 entries)
+        try:
+            log_file = "/app/background_sync.log"
+            recent_logs = []
+            if os.path.exists(log_file):
+                with open(log_file, 'r') as f:
+                    lines = f.readlines()
+                    # Get last 50 lines
+                    recent_lines = lines[-50:] if len(lines) > 50 else lines
+                    for line in recent_lines:
+                        line = line.strip()
+                        if line and ('sync' in line.lower() or 'email' in line.lower() or 'error' in line.lower()):
+                            recent_logs.append(line)
+        except Exception as log_error:
+            logger.error(f"Error reading sync logs: {log_error}")
+            recent_logs = []
+        
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "sync_progress": sync_progress,
+            "database_stats": {
+                "current_email_count": current_email_count,
+                "latest_email_date": latest_email_date.isoformat() if latest_email_date else None,
+                "last_sync_time": last_sync_time.isoformat() if last_sync_time else None
+            },
+            "background_sync": sync_status,
+            "system_info": system_info,
+            "recent_logs": recent_logs[-20:],  # Last 20 log entries
+            "status": "success"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting real-time sync status: {e}")
+        return {
+            "error": str(e),
+            "timestamp": datetime.now().isoformat(),
+            "status": "failed"
+        }
+
+@router.post("/sync/stop")
+async def stop_sync(
+    db: Session = Depends(get_db)
+):
+    """Stop any running sync (no auth required)"""
+    try:
+        # Get the first user from database
+        user = db.query(User).first()
+        if not user:
+            return {
+                "error": "No users found in database",
+                "status": "no_users"
+            }
+        
+        from ..services.sync_service import OptimizedSyncService
+        
+        # Request sync stop
+        stopped = OptimizedSyncService.request_stop_sync(user.id)
+        
+        return {
+            "message": "Stop sync requested" if stopped else "No active sync found",
+            "user_id": user.id,
+            "sync_stopped": stopped,
+            "status": "success"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error stopping sync: {e}")
+        return {
+            "error": str(e),
+            "status": "failed"
+        }
+
+@router.get("/sync/status-control")
+async def get_sync_status_control(
+    db: Session = Depends(get_db)
+):
+    """Get current sync control status (no auth required)"""
+    try:
+        # Get the first user from database
+        user = db.query(User).first()
+        if not user:
+            return {
+                "error": "No users found in database",
+                "status": "no_users"
+            }
+        
+        from ..services.sync_service import OptimizedSyncService
+        
+        is_active = OptimizedSyncService.is_sync_active(user.id)
+        session_id = OptimizedSyncService.get_active_sync_session_id(user.id)
+        
+        return {
+            "user_id": user.id,
+            "sync_active": is_active,
+            "session_id": session_id,
+            "status": "success"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting sync status: {e}")
         return {
             "error": str(e),
             "status": "failed"

@@ -34,11 +34,36 @@ engine = create_engine(
     }
 )
 
+# Create a separate engine for frontend requests with shorter timeouts
+frontend_engine = create_engine(
+    DATABASE_URL,
+    poolclass=QueuePool,
+    pool_size=10,  # Smaller pool for frontend
+    max_overflow=20,  # Smaller overflow for frontend
+    pool_pre_ping=True,  # Verify connections before use
+    pool_recycle=900,  # Recycle connections after 15 minutes
+    pool_timeout=10,  # Shorter timeout for frontend
+    echo=False,
+    # Frontend-specific optimizations with shorter timeouts
+    connect_args={
+        "application_name": "gmail_backup_frontend",
+        "options": "-c timezone=utc -c statement_timeout=30000 -c idle_in_transaction_session_timeout=30000"  # 30 seconds timeout
+    }
+)
+
 # Create SessionLocal class with optimized settings
 SessionLocal = sessionmaker(
     autocommit=False, 
     autoflush=False, 
     bind=engine,
+    expire_on_commit=False  # Keep objects loaded after commit
+)
+
+# Create FrontendSessionLocal class for frontend requests
+FrontendSessionLocal = sessionmaker(
+    autocommit=False, 
+    autoflush=False, 
+    bind=frontend_engine,
     expire_on_commit=False  # Keep objects loaded after commit
 )
 
