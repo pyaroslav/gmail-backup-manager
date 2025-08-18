@@ -71,6 +71,7 @@ function showPage(page) {
         case 'sync':
             console.log('Showing sync page');
             document.getElementById('syncPage').style.display = 'block';
+            loadSyncPage();
             initializeSync();
             break;
         case 'analytics':
@@ -796,34 +797,336 @@ document.getElementById('closeDetail').addEventListener('click', closeEmailDetai
 
 // Load dashboard
 function loadDashboard() {
-    // Try multiple endpoints in order of reliability
-    const endpoints = [
-        'http://localhost:3002/api/db/email-count',  // Node.js direct server
-        'http://localhost:8000/api/v1/test/db/raw-count',
-        'http://localhost:8000/api/v1/test/db/frontend-count',
-        'http://localhost:8000/api/v1/test/cache/file-count',
-        'http://localhost:8000/api/v1/test/db/direct-count'
-    ];
+    console.log('🔄 Loading dashboard data...');
     
-    let currentEndpoint = 0;
+    // Use the comprehensive dashboard endpoint
+    const dashboardEndpoint = 'http://localhost:3002/api/db/dashboard';
     
-    function tryEndpoint() {
-        if (currentEndpoint >= endpoints.length) {
-            document.getElementById('syncStatus').textContent = 'Status unavailable';
-            document.getElementById('lastSyncTime').textContent = 'Unknown';
-            document.getElementById('totalSynced').textContent = 'Loading...';
-            document.getElementById('databaseSize').textContent = 'Loading...';
-            return;
+    Promise.race([
+        fetch(dashboardEndpoint),
+        new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Dashboard timeout')), 5000)
+        )
+    ])
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        console.log('📊 Dashboard data received:', data);
+        
+        // Debug: Check if elements exist
+        const totalEmailsElement = document.getElementById('totalEmails');
+        const unreadEmailsElement = document.getElementById('unreadEmails');
+        const lastSyncElement = document.getElementById('lastSync');
+        const starredEmailsElement = document.getElementById('starredEmails');
+        const databaseSizeElement = document.getElementById('databaseSize');
+        
+        console.log('🔍 Element check:', {
+            totalEmails: !!totalEmailsElement,
+            unreadEmails: !!unreadEmailsElement,
+            lastSync: !!lastSyncElement,
+            starredEmails: !!starredEmailsElement,
+            databaseSize: !!databaseSizeElement
+        });
+        
+        // Update total emails
+        const totalEmails = data.total_emails || 0;
+        if (totalEmailsElement) {
+            totalEmailsElement.textContent = totalEmails.toLocaleString();
+            console.log('✅ Updated totalEmails element');
+        } else {
+            console.error('❌ totalEmails element not found!');
         }
         
-        const endpoint = endpoints[currentEndpoint];
+        // Update unread emails
+        const unreadEmails = data.unread_emails || 0;
+        if (unreadEmailsElement) {
+            unreadEmailsElement.textContent = unreadEmails.toLocaleString();
+            console.log('✅ Updated unreadEmails element');
+        } else {
+            console.error('❌ unreadEmails element not found!');
+        }
         
-        Promise.race([
-            fetch(endpoint),
-            new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Sync status timeout')), 3000)
-            )
-        ])
+        // Update last sync time
+        let lastSyncDisplay = 'Never';
+        if (data.last_sync_time) {
+            const lastSync = new Date(data.last_sync_time);
+            lastSyncDisplay = lastSync.toLocaleString();
+        } else if (data.latest_email_date) {
+            const latestEmail = new Date(data.latest_email_date);
+            lastSyncDisplay = latestEmail.toLocaleString();
+        }
+        if (lastSyncElement) {
+            lastSyncElement.textContent = lastSyncDisplay;
+            console.log('✅ Updated lastSync element');
+        } else {
+            console.error('❌ lastSync element not found!');
+        }
+        
+        // Update starred emails (placeholder for now)
+        if (starredEmailsElement) {
+            starredEmailsElement.textContent = '0'; // TODO: Get actual starred count
+            console.log('✅ Updated starredEmails element');
+        } else {
+            console.error('❌ starredEmails element not found!');
+        }
+        
+        // Update database size
+        if (databaseSizeElement) {
+            if (data.database_size_gb !== undefined) {
+                databaseSizeElement.textContent = `${data.database_size_gb} GB`;
+            } else if (data.database_size_pretty) {
+                databaseSizeElement.textContent = data.database_size_pretty;
+            } else {
+                databaseSizeElement.textContent = `${totalEmails.toLocaleString()} emails`;
+            }
+            console.log('✅ Updated databaseSize element');
+        } else {
+            console.error('❌ databaseSize element not found!');
+        }
+        
+        // Update recent emails section if it exists
+        console.log('📧 Recent emails data check:', {
+            has_recent_emails: !!data.recent_emails,
+            recent_emails_length: data.recent_emails ? data.recent_emails.length : 0,
+            recent_emails: data.recent_emails ? data.recent_emails.slice(0, 2) : null // Show first 2 for debugging
+        });
+        
+        if (data.recent_emails && data.recent_emails.length > 0) {
+            updateRecentEmailsSection(data.recent_emails);
+        } else {
+            console.log('⚠️ No recent emails data available');
+        }
+        
+        console.log('✅ Dashboard updated successfully');
+        console.log(`📈 Total emails: ${totalEmails.toLocaleString()}`);
+        console.log(`🔄 Sync status: ${syncStatus}`);
+        console.log(`⏰ Last sync: ${lastSyncDisplay}`);
+    })
+    .catch(error => {
+        console.error('❌ Dashboard loading failed:', error);
+        
+        // Fallback to simple email count
+        fetch('http://localhost:3002/api/db/email-count')
+            .then(response => response.json())
+            .then(data => {
+                const totalEmails = data.total_emails || 0;
+                const totalEmailsElement = document.getElementById('totalEmails');
+                const unreadEmailsElement = document.getElementById('unreadEmails');
+                const lastSyncElement = document.getElementById('lastSync');
+                const starredEmailsElement = document.getElementById('starredEmails');
+                
+                if (totalEmailsElement) {
+                    totalEmailsElement.textContent = totalEmails.toLocaleString();
+                }
+                if (unreadEmailsElement) {
+                    unreadEmailsElement.textContent = '0';
+                }
+                if (lastSyncElement) {
+                    lastSyncElement.textContent = 'Recent';
+                }
+                if (starredEmailsElement) {
+                    starredEmailsElement.textContent = '0';
+                }
+                console.log('✅ Dashboard updated with fallback data');
+            })
+            .catch(fallbackError => {
+                console.error('❌ Fallback also failed:', fallbackError);
+                const totalEmailsElement = document.getElementById('totalEmails');
+                const unreadEmailsElement = document.getElementById('unreadEmails');
+                const lastSyncElement = document.getElementById('lastSync');
+                const starredEmailsElement = document.getElementById('starredEmails');
+                
+                if (totalEmailsElement) totalEmailsElement.textContent = 'Loading...';
+                if (unreadEmailsElement) unreadEmailsElement.textContent = 'Loading...';
+                if (lastSyncElement) lastSyncElement.textContent = 'Unknown';
+                if (starredEmailsElement) starredEmailsElement.textContent = 'Loading...';
+            });
+    });
+}
+
+// Load sync page data
+function loadSyncPage() {
+    console.log('🔄 Loading sync page data...');
+    
+    // Use the comprehensive dashboard endpoint
+    const dashboardEndpoint = 'http://localhost:3002/api/db/dashboard';
+    
+    Promise.race([
+        fetch(dashboardEndpoint),
+        new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Sync page timeout')), 5000)
+        )
+    ])
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        console.log('📊 Sync page data received:', data);
+        
+        // Debug: Check if sync page elements exist
+        const syncStatusElement = document.getElementById('syncStatus');
+        const lastSyncTimeElement = document.getElementById('lastSyncTime');
+        const totalSyncedElement = document.getElementById('totalSynced');
+        const syncDatabaseSizeElement = document.getElementById('syncDatabaseSize');
+        
+        console.log('🔍 Sync page element check:', {
+            syncStatus: !!syncStatusElement,
+            lastSyncTime: !!lastSyncTimeElement,
+            totalSynced: !!totalSyncedElement,
+            syncDatabaseSize: !!syncDatabaseSizeElement
+        });
+        
+        // Update sync status
+        const syncStatus = data.sync_in_progress ? 'Sync in progress' : 'Ready to sync';
+        if (syncStatusElement) {
+            syncStatusElement.textContent = syncStatus;
+            console.log('✅ Updated syncStatus element');
+        } else {
+            console.error('❌ syncStatus element not found!');
+        }
+        
+        // Update last sync time
+        let lastSyncDisplay = 'Never';
+        if (data.last_sync_time) {
+            const lastSync = new Date(data.last_sync_time);
+            lastSyncDisplay = lastSync.toLocaleString();
+        } else if (data.latest_email_date) {
+            const latestEmail = new Date(data.latest_email_date);
+            lastSyncDisplay = latestEmail.toLocaleString();
+        }
+        if (lastSyncTimeElement) {
+            lastSyncTimeElement.textContent = lastSyncDisplay;
+            console.log('✅ Updated lastSyncTime element');
+        } else {
+            console.error('❌ lastSyncTime element not found!');
+        }
+        
+        // Update total synced
+        const totalEmails = data.total_emails || 0;
+        if (totalSyncedElement) {
+            totalSyncedElement.textContent = `${totalEmails.toLocaleString()} emails`;
+            console.log('✅ Updated totalSynced element');
+        } else {
+            console.error('❌ totalSynced element not found!');
+        }
+        
+        // Update sync database size
+        if (syncDatabaseSizeElement) {
+            if (data.database_size_gb !== undefined) {
+                syncDatabaseSizeElement.textContent = `${data.database_size_gb} GB`;
+            } else if (data.database_size_pretty) {
+                syncDatabaseSizeElement.textContent = data.database_size_pretty;
+            } else {
+                syncDatabaseSizeElement.textContent = `${totalEmails.toLocaleString()} emails`;
+            }
+            console.log('✅ Updated syncDatabaseSize element');
+        } else {
+            console.error('❌ syncDatabaseSize element not found!');
+        }
+        
+        console.log('✅ Sync page updated successfully');
+        console.log(`📈 Total emails: ${totalEmails.toLocaleString()}`);
+        console.log(`🔄 Sync status: ${syncStatus}`);
+        console.log(`⏰ Last sync: ${lastSyncDisplay}`);
+    })
+    .catch(error => {
+        console.error('❌ Sync page loading failed:', error);
+        
+        // Fallback to simple email count
+        fetch('http://localhost:3002/api/db/email-count')
+            .then(response => response.json())
+            .then(data => {
+                const totalEmails = data.total_emails || 0;
+                const syncStatusElement = document.getElementById('syncStatus');
+                const lastSyncTimeElement = document.getElementById('lastSyncTime');
+                const totalSyncedElement = document.getElementById('totalSynced');
+                const syncDatabaseSizeElement = document.getElementById('syncDatabaseSize');
+                
+                if (syncStatusElement) syncStatusElement.textContent = 'Ready to sync';
+                if (lastSyncTimeElement) lastSyncTimeElement.textContent = 'Recent';
+                if (totalSyncedElement) totalSyncedElement.textContent = `${totalEmails.toLocaleString()} emails`;
+                if (syncDatabaseSizeElement) syncDatabaseSizeElement.textContent = `${totalEmails.toLocaleString()} emails`;
+                
+                console.log('✅ Sync page updated with fallback data');
+            })
+            .catch(fallbackError => {
+                console.error('❌ Sync page fallback also failed:', fallbackError);
+                const syncStatusElement = document.getElementById('syncStatus');
+                const lastSyncTimeElement = document.getElementById('lastSyncTime');
+                const totalSyncedElement = document.getElementById('totalSynced');
+                const syncDatabaseSizeElement = document.getElementById('syncDatabaseSize');
+                
+                if (syncStatusElement) syncStatusElement.textContent = 'Status unavailable';
+                if (lastSyncTimeElement) lastSyncTimeElement.textContent = 'Unknown';
+                if (totalSyncedElement) totalSyncedElement.textContent = 'Loading...';
+                if (syncDatabaseSizeElement) syncDatabaseSizeElement.textContent = 'Loading...';
+            });
+    });
+}
+
+// Update recent emails section
+function updateRecentEmailsSection(recentEmails) {
+    console.log('📧 Updating recent emails section with:', recentEmails.length, 'emails');
+    
+    const recentEmailsContainer = document.querySelector('.recent-emails-list');
+    if (!recentEmailsContainer) {
+        console.error('❌ Recent emails container not found!');
+        return;
+    }
+    
+    console.log('✅ Found recent emails container, updating with', recentEmails.length, 'emails');
+    
+    const emailsHTML = recentEmails.map(email => `
+        <div class="recent-email-item ${email.is_read ? 'read' : 'unread'}" data-email-id="${email.id}">
+            <div class="recent-email-sender">${email.sender}</div>
+            <div class="recent-email-subject">${email.subject}</div>
+            <div class="recent-email-date">${email.date_received ? new Date(email.date_received).toLocaleDateString() : 'Unknown'}</div>
+        </div>
+    `).join('');
+    
+    recentEmailsContainer.innerHTML = emailsHTML;
+    
+    // Add click event listeners to each email item
+    const emailItems = recentEmailsContainer.querySelectorAll('.recent-email-item');
+    emailItems.forEach(item => {
+        item.addEventListener('click', function() {
+            const emailId = this.getAttribute('data-email-id');
+            if (emailId) {
+                showEmailModal(emailId);
+            }
+        });
+    });
+    
+    console.log('✅ Recent emails section updated successfully with click handlers');
+}
+
+// Show email modal with email details
+function showEmailModal(emailId) {
+    console.log('📧 Opening email modal for ID:', emailId);
+    
+    const modal = document.getElementById('emailModal');
+    if (!modal) {
+        console.error('❌ Email modal not found!');
+        return;
+    }
+    
+    // Show loading state
+    modal.style.display = 'block';
+    document.getElementById('modalEmailSubject').textContent = 'Loading...';
+    document.getElementById('modalEmailSender').textContent = 'Loading...';
+    document.getElementById('modalEmailDate').textContent = 'Loading...';
+    document.getElementById('modalEmailStatus').textContent = 'Loading...';
+    document.getElementById('modalEmailContent').textContent = 'Loading email content...';
+    
+    // Fetch email details
+    fetch(`http://localhost:3002/api/db/email/${emailId}`)
         .then(response => {
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
@@ -831,75 +1134,97 @@ function loadDashboard() {
             return response.json();
         })
         .then(data => {
-            console.log('Sync status data received:', data);
-            
-            if (data.total_emails !== undefined) {
-                // Use sync status endpoint data if available
-                if (data.status) {
-                    document.getElementById('syncStatus').textContent = 
-                        data.sync_in_progress ? 'Sync in progress' : 'Ready to sync';
-                    
-                    if (data.last_sync_time) {
-                        const lastSync = new Date(data.last_sync_time);
-                        document.getElementById('lastSyncTime').textContent = lastSync.toLocaleString();
-                    } else if (data.latest_email_date) {
-                        const latestEmail = new Date(data.latest_email_date);
-                        document.getElementById('lastSyncTime').textContent = latestEmail.toLocaleString();
-                    } else {
-                        document.getElementById('lastSyncTime').textContent = 'Recent';
-                    }
+            if (data.success && data.email) {
+                const email = data.email;
+                
+                // Update modal content
+                document.getElementById('modalEmailSubject').textContent = email.subject;
+                document.getElementById('modalEmailSender').textContent = email.sender;
+                document.getElementById('modalEmailDate').textContent = email.date_received ? 
+                    new Date(email.date_received).toLocaleString() : 'Unknown';
+                document.getElementById('modalEmailStatus').textContent = email.is_read ? 'Read' : 'Unread';
+                
+                // Render HTML content properly
+                const contentElement = document.getElementById('modalEmailContent');
+                if (email.content && email.content.trim()) {
+                    // Sanitize and render HTML content
+                    const sanitizedContent = sanitizeHTML(email.content);
+                    contentElement.innerHTML = sanitizedContent;
                 } else {
-                    document.getElementById('syncStatus').textContent = 'Ready to sync';
-                    document.getElementById('lastSyncTime').textContent = 'Recent';
+                    contentElement.textContent = 'No content available';
                 }
                 
-                document.getElementById('totalSynced').textContent = 
-                    `${data.total_emails?.toLocaleString() || 0} emails`;
-                
-                // Display database size in GB if available
-                console.log('Database size data:', { 
-                    database_size_gb: data.database_size_gb, 
-                    database_size_pretty: data.database_size_pretty 
-                });
-                
-                if (data.database_size_gb !== undefined) {
-                    document.getElementById('databaseSize').textContent = 
-                        `${data.database_size_gb} GB`;
-                    console.log('Set database size to:', `${data.database_size_gb} GB`);
-                } else {
-                    document.getElementById('databaseSize').textContent = 
-                        `${data.total_emails?.toLocaleString() || 0} emails`;
-                    console.log('Set database size to email count:', `${data.total_emails?.toLocaleString() || 0} emails`);
-                }
-                
-                // Display sync details if available
-                console.log('Sync details check:', { 
-                    has_sync_details: !!data.sync_details, 
-                    sync_in_progress: data.sync_in_progress,
-                    sync_details: data.sync_details 
-                });
-                
-                if (data.sync_details && data.sync_in_progress) {
-                    console.log('Calling displaySyncDetails with:', data.sync_details);
-                    displaySyncDetails(data.sync_details);
-                } else {
-                    console.log('Calling hideSyncDetails');
-                    hideSyncDetails();
-                }
-                
-                console.log(`Sync status loaded using: ${endpoint}`);
+                console.log('✅ Email modal populated with data');
             } else {
                 throw new Error('Invalid response format');
             }
         })
         .catch(error => {
-            console.log(`Endpoint ${endpoint} failed: ${error.message}`);
-            currentEndpoint++;
-            setTimeout(tryEndpoint, 500);
+            console.error('❌ Error loading email details:', error);
+            document.getElementById('modalEmailSubject').textContent = 'Error Loading Email';
+            document.getElementById('modalEmailSender').textContent = 'Error';
+            document.getElementById('modalEmailDate').textContent = 'Error';
+            document.getElementById('modalEmailStatus').textContent = 'Error';
+            document.getElementById('modalEmailContent').textContent = 'Failed to load email content. Please try again.';
         });
+}
+
+// Simple HTML sanitization function
+function sanitizeHTML(html) {
+    if (!html) return '';
+    
+    // Create a temporary div to parse and sanitize HTML
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = html;
+    
+    // Remove potentially dangerous elements and attributes
+    const dangerousElements = tempDiv.querySelectorAll('script, style, iframe, object, embed, form, input, button, select, textarea');
+    dangerousElements.forEach(el => el.remove());
+    
+    // Remove potentially dangerous attributes
+    const allElements = tempDiv.querySelectorAll('*');
+    allElements.forEach(el => {
+        const dangerousAttrs = ['onclick', 'onload', 'onerror', 'onmouseover', 'onfocus', 'onblur', 'onchange', 'onsubmit'];
+        dangerousAttrs.forEach(attr => {
+            if (el.hasAttribute(attr)) {
+                el.removeAttribute(attr);
+            }
+        });
+    });
+    
+    return tempDiv.innerHTML;
+}
+
+// Initialize email modal functionality
+function initializeEmailModal() {
+    const modal = document.getElementById('emailModal');
+    const closeBtn = document.getElementById('closeEmailModal');
+    
+    if (!modal || !closeBtn) {
+        console.error('❌ Email modal elements not found!');
+        return;
     }
     
-    tryEndpoint();
+    // Close modal when clicking the close button
+    closeBtn.addEventListener('click', function() {
+        modal.style.display = 'none';
+    });
+    
+    // Close modal when clicking outside the modal content
+    modal.addEventListener('click', function(event) {
+        if (event.target === modal) {
+            modal.style.display = 'none';
+        }
+    });
+    
+    // Close modal with Escape key
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape' && modal.style.display === 'block') {
+            modal.style.display = 'none';
+        }
+    });
+    
+    console.log('✅ Email modal functionality initialized');
 }
 
 // Search functionality
@@ -1143,10 +1468,15 @@ function loadSyncStatus() {
     
     function tryEndpoint() {
         if (currentEndpoint >= endpoints.length) {
-            document.getElementById('syncStatus').textContent = 'Status unavailable';
-            document.getElementById('lastSyncTime').textContent = 'Unknown';
-            document.getElementById('totalSynced').textContent = 'Loading...';
-            document.getElementById('databaseSize').textContent = 'Loading...';
+            const syncStatusElement = document.getElementById('syncStatus');
+            const lastSyncTimeElement = document.getElementById('lastSyncTime');
+            const totalSyncedElement = document.getElementById('totalSynced');
+            const syncDatabaseSizeElement = document.getElementById('syncDatabaseSize');
+            
+            if (syncStatusElement) syncStatusElement.textContent = 'Status unavailable';
+            if (lastSyncTimeElement) lastSyncTimeElement.textContent = 'Unknown';
+            if (totalSyncedElement) totalSyncedElement.textContent = 'Loading...';
+            if (syncDatabaseSizeElement) syncDatabaseSizeElement.textContent = 'Loading...';
             return;
         }
         
@@ -1169,26 +1499,35 @@ function loadSyncStatus() {
             
             if (data.total_emails !== undefined) {
                 // Use sync status endpoint data if available
+                const syncStatusElement = document.getElementById('syncStatus');
+                const lastSyncTimeElement = document.getElementById('lastSyncTime');
+                const totalSyncedElement = document.getElementById('totalSynced');
+                const syncDatabaseSizeElement = document.getElementById('syncDatabaseSize');
+                
                 if (data.status) {
-                    document.getElementById('syncStatus').textContent = 
-                        data.sync_in_progress ? 'Sync in progress' : 'Ready to sync';
+                    if (syncStatusElement) {
+                        syncStatusElement.textContent = data.sync_in_progress ? 'Sync in progress' : 'Ready to sync';
+                    }
                     
-                    if (data.last_sync_time) {
-                        const lastSync = new Date(data.last_sync_time);
-                        document.getElementById('lastSyncTime').textContent = lastSync.toLocaleString();
-                    } else if (data.latest_email_date) {
-                        const latestEmail = new Date(data.latest_email_date);
-                        document.getElementById('lastSyncTime').textContent = latestEmail.toLocaleString();
-                    } else {
-                        document.getElementById('lastSyncTime').textContent = 'Recent';
+                    if (lastSyncTimeElement) {
+                        if (data.last_sync_time) {
+                            const lastSync = new Date(data.last_sync_time);
+                            lastSyncTimeElement.textContent = lastSync.toLocaleString();
+                        } else if (data.latest_email_date) {
+                            const latestEmail = new Date(data.latest_email_date);
+                            lastSyncTimeElement.textContent = latestEmail.toLocaleString();
+                        } else {
+                            lastSyncTimeElement.textContent = 'Recent';
+                        }
                     }
                 } else {
-                    document.getElementById('syncStatus').textContent = 'Ready to sync';
-                    document.getElementById('lastSyncTime').textContent = 'Recent';
+                    if (syncStatusElement) syncStatusElement.textContent = 'Ready to sync';
+                    if (lastSyncTimeElement) lastSyncTimeElement.textContent = 'Recent';
                 }
                 
-                document.getElementById('totalSynced').textContent = 
-                    `${data.total_emails?.toLocaleString() || 0} emails`;
+                if (totalSyncedElement) {
+                    totalSyncedElement.textContent = `${data.total_emails?.toLocaleString() || 0} emails`;
+                }
                 
                 // Display database size in GB if available
                 console.log('Database size data:', { 
@@ -1196,14 +1535,14 @@ function loadSyncStatus() {
                     database_size_pretty: data.database_size_pretty 
                 });
                 
-                if (data.database_size_gb !== undefined) {
-                    document.getElementById('databaseSize').textContent = 
-                        `${data.database_size_gb} GB`;
-                    console.log('Set database size to:', `${data.database_size_gb} GB`);
-                } else {
-                    document.getElementById('databaseSize').textContent = 
-                        `${data.total_emails?.toLocaleString() || 0} emails`;
-                    console.log('Set database size to email count:', `${data.total_emails?.toLocaleString() || 0} emails`);
+                if (syncDatabaseSizeElement) {
+                    if (data.database_size_gb !== undefined) {
+                        syncDatabaseSizeElement.textContent = `${data.database_size_gb} GB`;
+                        console.log('Set sync database size to:', `${data.database_size_gb} GB`);
+                    } else {
+                        syncDatabaseSizeElement.textContent = `${data.total_emails?.toLocaleString() || 0} emails`;
+                        console.log('Set sync database size to email count:', `${data.total_emails?.toLocaleString() || 0} emails`);
+                    }
                 }
                 
                 // Display sync details if available
@@ -2191,6 +2530,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initialize navigation
     initializeNavigation();
+    
+    // Initialize email modal functionality
+    initializeEmailModal();
     
     // Show dashboard by default
     showPage('dashboard');

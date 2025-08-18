@@ -69,6 +69,110 @@ app.get('/api/db/email-count', async (req, res) => {
     }
 });
 
+// Dashboard data endpoint - comprehensive data for dashboard display
+app.get('/api/db/dashboard', async (req, res) => {
+    try {
+        // Get total email count
+        const countResult = await client.query('SELECT COUNT(*) FROM emails');
+        const totalEmails = parseInt(countResult.rows[0].count);
+        
+        // Get database size
+        const sizeResult = await client.query(`
+            SELECT pg_size_pretty(pg_database_size(current_database())) as size,
+                   pg_database_size(current_database()) as size_bytes
+        `);
+        const dbSizeBytes = parseInt(sizeResult.rows[0].size_bytes);
+        const dbSizeGB = (dbSizeBytes / (1024 * 1024 * 1024)).toFixed(2);
+        
+        // Get latest email date
+        const latestEmailResult = await client.query('SELECT MAX(date_received) FROM emails');
+        const latestEmailDate = latestEmailResult.rows[0].max;
+        
+        // Get unread email count
+        const unreadResult = await client.query('SELECT COUNT(*) FROM emails WHERE is_read = false');
+        const unreadEmails = parseInt(unreadResult.rows[0].count);
+        
+        // Get recent emails (last 10)
+        const recentEmailsResult = await client.query(`
+            SELECT id, subject, sender, date_received, is_read
+            FROM emails 
+            ORDER BY date_received DESC 
+            LIMIT 10
+        `);
+        
+        const recentEmails = recentEmailsResult.rows.map(row => ({
+            id: row.id,
+            subject: row.subject || 'No Subject',
+            sender: row.sender || 'Unknown',
+            date_received: row.date_received ? row.date_received.toISOString() : null,
+            is_read: row.is_read
+        }));
+        
+        // Check for active sync sessions
+        let syncStatus = 'ready';
+        let lastSyncTime = null;
+        let syncInProgress = false;
+        
+        try {
+            // Check if sync_sessions table exists
+            const tableExistsResult = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'sync_sessions'
+                );
+            `);
+            
+            if (tableExistsResult.rows[0].exists) {
+                // Get the most recent sync session
+                const syncResult = await client.query(`
+                    SELECT status, started_at, completed_at, emails_synced
+                    FROM sync_sessions 
+                    ORDER BY started_at DESC 
+                    LIMIT 1
+                `);
+                
+                if (syncResult.rows.length > 0) {
+                    const sync = syncResult.rows[0];
+                    syncStatus = sync.status;
+                    syncInProgress = sync.status === 'started' || sync.status === 'running';
+                    lastSyncTime = sync.completed_at || sync.started_at;
+                }
+            }
+        } catch (syncError) {
+            console.log('Sync sessions table not available:', syncError.message);
+        }
+        
+        res.json({
+            total_emails: totalEmails,
+            unread_emails: unreadEmails,
+            database_size_gb: parseFloat(dbSizeGB),
+            database_size_pretty: sizeResult.rows[0].size,
+            latest_email_date: latestEmailDate ? latestEmailDate.toISOString() : null,
+            last_sync_time: lastSyncTime ? lastSyncTime.toISOString() : null,
+            sync_status: syncStatus,
+            sync_in_progress: syncInProgress,
+            recent_emails: recentEmails,
+            timestamp: new Date().toISOString(),
+            method: 'direct_nodejs_dashboard'
+        });
+    } catch (error) {
+        console.error('Dashboard data error:', error);
+        res.status(500).json({
+            error: error.message,
+            total_emails: 0,
+            unread_emails: 0,
+            database_size_gb: 0,
+            database_size_pretty: '0 MB',
+            latest_email_date: null,
+            last_sync_time: null,
+            sync_status: 'error',
+            sync_in_progress: false,
+            recent_emails: [],
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
 // Emails endpoint
 app.get('/api/db/emails', async (req, res) => {
     try {
@@ -123,59 +227,7 @@ app.get('/api/db/emails', async (req, res) => {
     }
 });
 
-// Get single email details endpoint
-app.get('/api/db/email/:id', async (req, res) => {
-    try {
-        const emailId = req.params.id;
-        
-        // Get full email details
-        const emailResult = await client.query(`
-            SELECT id, subject, sender, date_received, is_read, is_starred, 
-                   body_plain, body_html, thread_id, gmail_id, labels,
-                   recipients, cc, bcc, date_sent, is_important, is_spam, is_trash,
-                   sentiment_score, category, priority_score, summary
-            FROM emails 
-            WHERE id = $1
-        `, [emailId]);
-        
-        if (emailResult.rows.length === 0) {
-            return res.status(404).json({ error: 'Email not found' });
-        }
-        
-        const email = emailResult.rows[0];
-        
-        res.json({
-            id: email.id,
-            subject: email.subject || 'No Subject',
-            sender: email.sender || 'Unknown',
-            date_received: email.date_received ? email.date_received.toISOString() : null,
-            date_sent: email.date_sent ? email.date_sent.toISOString() : null,
-            is_read: email.is_read,
-            is_starred: email.is_starred,
-            is_important: email.is_important,
-            is_spam: email.is_spam,
-            is_trash: email.is_trash,
-            body_plain: email.body_plain,
-            body_html: email.body_html,
-            thread_id: email.thread_id,
-            gmail_id: email.gmail_id,
-            labels: email.labels,
-            recipients: email.recipients,
-            cc: email.cc,
-            bcc: email.bcc,
-            sentiment_score: email.sentiment_score,
-            category: email.category,
-            priority_score: email.priority_score,
-            summary: email.summary,
-            method: 'direct_nodejs'
-        });
-    } catch (error) {
-        console.error('Email details error:', error);
-        res.status(500).json({
-            error: error.message
-        });
-    }
-});
+
 
 // Search endpoint
 app.get('/api/db/search', async (req, res) => {
@@ -1212,6 +1264,75 @@ app.post('/api/sync/cleanup', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error cleaning up sync sessions',
+            error: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// Get individual email details
+app.get('/api/db/email/:id', async (req, res) => {
+    try {
+        const emailId = parseInt(req.params.id);
+        
+        if (isNaN(emailId)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid email ID',
+                timestamp: new Date().toISOString()
+            });
+        }
+        
+        const result = await client.query(`
+            SELECT 
+                id,
+                subject,
+                sender,
+                recipients,
+                date_received,
+                is_read,
+                is_starred,
+                body_plain,
+                body_html,
+                thread_id,
+                gmail_id
+            FROM emails 
+            WHERE id = $1
+        `, [emailId]);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Email not found',
+                timestamp: new Date().toISOString()
+            });
+        }
+        
+        const email = result.rows[0];
+        
+        // Format the response
+        res.json({
+            success: true,
+            email: {
+                id: email.id,
+                subject: email.subject || 'No Subject',
+                sender: email.sender || 'Unknown',
+                recipient: email.recipients || 'Unknown',
+                date_received: email.date_received ? email.date_received.toISOString() : null,
+                is_read: email.is_read,
+                is_starred: email.is_starred,
+                content: email.body_html || email.body_plain || 'No content available',
+                thread_id: email.thread_id,
+                gmail_id: email.gmail_id
+            },
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('Error fetching email details:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching email details',
             error: error.message,
             timestamp: new Date().toISOString()
         });
