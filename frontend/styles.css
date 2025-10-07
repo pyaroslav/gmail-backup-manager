@@ -91,6 +91,171 @@ body {
     text-align: center;
 }
 
+/* Notification Container */
+.notification-container {
+    position: relative;
+    display: inline-block;
+}
+
+/* Notification Dropdown */
+.notification-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    width: 350px;
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+    z-index: 1000;
+    display: none;
+    margin-top: 8px;
+}
+
+.notification-dropdown.show {
+    display: block;
+}
+
+.notification-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px;
+    border-bottom: 1px solid #e5e7eb;
+    background: #f9fafb;
+}
+
+.notification-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #374151;
+}
+
+.btn-clear {
+    background: none;
+    border: none;
+    color: #6b7280;
+    font-size: 0.875rem;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+}
+
+.btn-clear:hover {
+    background: #e5e7eb;
+}
+
+.notification-list {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.notification-item {
+    display: flex;
+    padding: 12px 16px;
+    border-bottom: 1px solid #f3f4f6;
+    transition: background-color 0.2s;
+}
+
+.notification-item:hover {
+    background: #f9fafb;
+}
+
+.notification-item:last-child {
+    border-bottom: none;
+}
+
+.notification-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 12px;
+    flex-shrink: 0;
+}
+
+.notification-icon.success {
+    background: #d1fae5;
+    color: #059669;
+}
+
+.notification-icon.info {
+    background: #dbeafe;
+    color: #2563eb;
+}
+
+.notification-icon.warning {
+    background: #fef3c7;
+    color: #d97706;
+}
+
+.notification-icon.error {
+    background: #fee2e2;
+    color: #dc2626;
+}
+
+.notification-content {
+    flex: 1;
+}
+
+.notification-title {
+    font-weight: 600;
+    color: #374151;
+    font-size: 0.875rem;
+    margin-bottom: 2px;
+}
+
+.notification-message {
+    color: #6b7280;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    margin-bottom: 4px;
+}
+
+.notification-time {
+    color: #9ca3af;
+    font-size: 0.75rem;
+}
+
+/* Dark theme support */
+.dark-theme .notification-dropdown {
+    background: #1f2937;
+    border-color: #374151;
+}
+
+.dark-theme .notification-header {
+    background: #111827;
+    border-color: #374151;
+}
+
+.dark-theme .notification-header h3 {
+    color: #f9fafb;
+}
+
+.dark-theme .notification-item {
+    border-color: #374151;
+}
+
+.dark-theme .notification-item:hover {
+    background: #111827;
+}
+
+.dark-theme .notification-title {
+    color: #f9fafb;
+}
+
+.dark-theme .notification-message {
+    color: #d1d5db;
+}
+
+.dark-theme .notification-time {
+    color: #9ca3af;
+}
+
 .user-info {
     display: flex;
     align-items: center;
@@ -3129,6 +3294,54 @@ body {
     border-radius: 12px;
     color: white;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+/* Current Sync Progress Panel */
+.sync-progress {
+    margin: 20px 0;
+    padding: 20px;
+    background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+    border-radius: 12px;
+    color: white;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+.sync-progress h3 {
+    margin: 0 0 15px 0;
+    color: white;
+    font-size: 1.3rem;
+    font-weight: 600;
+    text-align: center;
+}
+
+.progress-info {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin-top: 15px;
+}
+
+.progress-item {
+    background: rgba(255, 255, 255, 0.1);
+    padding: 15px;
+    border-radius: 8px;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    text-align: center;
+}
+
+.progress-item .label {
+    display: block;
+    font-size: 0.9rem;
+    color: rgba(255, 255, 255, 0.8);
+    margin-bottom: 5px;
+}
+
+.progress-item .value {
+    display: block;
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: white;
 }
 
 .sync-details-panel {

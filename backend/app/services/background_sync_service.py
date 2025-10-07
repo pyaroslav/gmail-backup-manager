@@ -3,6 +3,7 @@ import logging
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional
+from sqlalchemy import func
 
 from ..models.database import SessionLocal
 from ..models.user import User
@@ -84,7 +85,12 @@ class BackgroundSyncService:
         try:
             # Get users that need syncing
             db = SessionLocal()
-            users = db.query(User).filter(User.gmail_access_token.isnot(None)).all()
+            try:
+                users = db.query(User).filter(User.gmail_access_token.isnot(None)).all()
+            except Exception as db_error:
+                logger.error(f"Database error fetching users: {db_error}")
+                db.rollback()
+                return
             
             if not users:
                 logger.info("No users found for syncing")
@@ -92,12 +98,12 @@ class BackgroundSyncService:
             
             for user in users:
                 try:
-                    # Check if user needs syncing (last sync > 1 hour ago or never synced)
+                    # Check if user needs syncing (last sync > 10 minutes ago or never synced)
                     current_time = datetime.now(timezone.utc)
                     time_since_last_sync = current_time - user.last_sync if user.last_sync else timedelta(hours=999)
                     needs_sync = (
                         user.last_sync is None or 
-                        time_since_last_sync > timedelta(hours=1)
+                        time_since_last_sync > timedelta(minutes=10)
                     )
                     
                     logger.info(f"User {user.email}: last_sync={user.last_sync}, current_time={current_time}, time_since_last_sync={time_since_last_sync}, needs_sync={needs_sync}")
@@ -110,7 +116,8 @@ class BackgroundSyncService:
                         timeout = aiohttp.ClientTimeout(total=1800)  # 30 minutes timeout
                         async with aiohttp.ClientSession(timeout=timeout) as session:
                             async with session.post(
-                                f"http://localhost:8000/api/v1/test/sync/start?max_emails=1000"
+                                f"http://localhost:8000/api/v1/test/sync/start",
+                                json={"max_emails": 1000}
                             ) as response:
                                 result = await response.json()
                                 
@@ -121,9 +128,18 @@ class BackgroundSyncService:
                                     logger.info(f"Sync completed for {user.email}: {emails_synced} emails")
                                     
                                     # Update user's last_sync time to prevent immediate re-sync
-                                    user.last_sync = datetime.now(timezone.utc)
-                                    db.commit()
-                                    logger.info(f"Updated last_sync for {user.email} to {user.last_sync}")
+                                    try:
+                                        user.last_sync = datetime.now(timezone.utc)
+                                        db.commit()
+                                        logger.info(f"Updated last_sync for {user.email} to {user.last_sync}")
+                                    except Exception as db_error:
+                                        logger.error(f"Database error updating last_sync for {user.email}: {db_error}")
+                                        db.rollback()
+                                        # Try to refresh the session
+                                        try:
+                                            db.refresh(user)
+                                        except:
+                                            pass
                                 else:
                                     self.sync_stats["errors"] += 1
                                     logger.error(f"Sync failed for {user.email}: {result.get('error', 'Unknown error')}")
@@ -137,6 +153,8 @@ class BackgroundSyncService:
                 except Exception as e:
                     self.sync_stats["errors"] += 1
                     logger.error(f"Error syncing user {user.email}: {e}")
+                    logger.error(f"Error type: {type(e).__name__}")
+                    logger.error(f"Error details: {str(e)}")
                     continue
             
             # Update sync stats
@@ -160,11 +178,21 @@ class BackgroundSyncService:
         """
         Get current background sync status
         """
+        logger.info(f"Getting sync status: is_running={self.is_running}, sync_in_progress={self.sync_in_progress}, last_sync_time={self.last_sync_time}")
+        
+        # Ensure proper serialization
+        last_sync_time_str = None
+        if self.last_sync_time:
+            if hasattr(self.last_sync_time, 'isoformat'):
+                last_sync_time_str = self.last_sync_time.isoformat()
+            else:
+                last_sync_time_str = str(self.last_sync_time)
+        
         return {
-            "is_running": self.is_running,
-            "sync_interval_seconds": self.sync_interval,
-            "last_sync_time": self.last_sync_time.isoformat() if self.last_sync_time else None,
-            "sync_in_progress": self.sync_in_progress,
+            "is_running": bool(self.is_running),
+            "sync_interval_seconds": int(self.sync_interval),
+            "last_sync_time": last_sync_time_str,
+            "sync_in_progress": bool(self.sync_in_progress),
             "stats": self.sync_stats.copy()
         }
     

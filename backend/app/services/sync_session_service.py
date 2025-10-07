@@ -152,6 +152,7 @@ class SyncSessionService:
         last_error_message: str = None,
         db: Session = None
     ) -> bool:
+        logger.info(f"update_sync_progress called for session {session_id} with emails_synced={emails_synced}")
         """
         Update progress for a sync session
         
@@ -311,6 +312,58 @@ class SyncSessionService:
             if should_close_db:
                 db.close()
     
+    @staticmethod
+    def cleanup_stale_sessions(timeout_minutes: int = 30, db: Session = None) -> int:
+        """
+        Clean up stale sync sessions (those stuck in 'started' status for too long)
+        
+        Args:
+            timeout_minutes: Minutes after which a session is considered stale
+            db: Database session (optional)
+            
+        Returns:
+            Number of sessions cleaned up
+        """
+        should_close_db = False
+        if db is None:
+            db = SessionLocal()
+            should_close_db = True
+        
+        try:
+            cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=timeout_minutes)
+            
+            # Find stale sessions (started but not completed for too long)
+            stale_sessions = (
+                db.query(SyncSession)
+                .filter(
+                    SyncSession.status.in_(['started', 'running']),
+                    SyncSession.started_at < cutoff_time
+                )
+                .all()
+            )
+            
+            cleaned_count = 0
+            for session in stale_sessions:
+                session.status = 'failed'
+                session.completed_at = datetime.now(timezone.utc)
+                session.error_message = f"Session timed out after {timeout_minutes} minutes"
+                cleaned_count += 1
+                logger.warning(f"Cleaned up stale sync session {session.id} (started at {session.started_at})")
+            
+            if cleaned_count > 0:
+                db.commit()
+                logger.info(f"Cleaned up {cleaned_count} stale sync sessions")
+            
+            return cleaned_count
+            
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to cleanup stale sync sessions: {e}")
+            return 0
+        finally:
+            if should_close_db:
+                db.close()
+
     @staticmethod
     def cleanup_old_sessions(days_to_keep: int = 30, db: Session = None) -> int:
         """

@@ -103,20 +103,19 @@ class OptimizedSyncService:
             logger.error(f"Failed to create sync session: {e}")
             # Continue without session tracking if it fails
         
+        # Clean up any stale sync sessions before starting
         try:
-            # Get the last synced email to continue from where we left off
-            # Use a separate session for this initial query
-            with SessionLocal() as db:
-                last_synced_email = db.query(Email).order_by(Email.date_received.desc()).first()
-                last_sync_date = last_synced_email.date_received if last_synced_email else None
-            
-            if last_sync_date:
-                logger.info(f"Continuing sync from last email date: {last_sync_date}")
-                # Use Gmail query to get emails after the last synced date
-                query = f"after:{int(last_sync_date.timestamp())}"
-            else:
-                logger.info("Starting fresh sync - no previous emails found")
-                query = None
+            cleaned_count = SyncSessionService.cleanup_stale_sessions(timeout_minutes=30)
+            if cleaned_count > 0:
+                logger.info(f"Cleaned up {cleaned_count} stale sync sessions before starting new sync")
+        except Exception as cleanup_error:
+            logger.warning(f"Failed to cleanup stale sessions: {cleanup_error}")
+        
+        try:
+            # For now, let's do a simple sync without date filtering to avoid the infinite loop
+            # We'll rely on the _process_single_email method to skip existing emails
+            logger.info("Starting sync - will skip existing emails")
+            query = None
             
             # Update sync session with query filter
             if sync_session:
@@ -135,7 +134,11 @@ class OptimizedSyncService:
                 except Exception as e:
                     logger.warning(f"Failed to update sync session query: {e}")
             
-            while True:
+            batch_count = 0
+            max_batches = 10  # Limit to prevent infinite loops
+            
+            while batch_count < max_batches:
+                batch_count += 1
                 # Get batch of email IDs from Gmail
                 batch_size = min(api_batch_size, max_emails - emails_synced) if max_emails else api_batch_size
                 
@@ -178,12 +181,13 @@ class OptimizedSyncService:
                         logger.error(f"Error processing email {message['id']}: {e}")
                         continue
                 
-                logger.info(f"Batch completed: {batch_synced} new emails synced out of {batch_processed} processed (total synced: {emails_synced})")
+                logger.info(f"Batch {batch_count} completed: {batch_synced} new emails synced out of {batch_processed} processed (total synced: {emails_synced})")
                 
                 # Update sync session progress after each batch
                 if sync_session:
+                    logger.info(f"Attempting to update sync session {sync_session.id} with emails_synced={emails_synced}, batch_processed={batch_processed}")
                     try:
-                        SyncSessionService.update_sync_progress(
+                        result = SyncSessionService.update_sync_progress(
                             sync_session.id,
                             emails_processed=emails_synced + (batch_processed - batch_synced),  # Total processed including skipped
                             emails_synced=emails_synced,
@@ -191,12 +195,23 @@ class OptimizedSyncService:
                             batches_processed=(sync_session.batches_processed or 0) + 1,
                             total_api_calls=(sync_session.total_api_calls or 0) + 1
                         )
+                        logger.info(f"Sync session update result: {result}")
                     except Exception as e:
                         logger.warning(f"Failed to update sync session progress: {e}")
+                else:
+                    logger.warning("No sync session available for progress update")
                 
                 # Check if stop was requested
                 if sync_session:
                     self._check_stop_requested(sync_session.id)
+                
+                # If no new emails were synced in this batch, we might be at the end
+                if batch_synced == 0:
+                    logger.info(f"No new emails synced in batch {batch_count}, checking if we should continue")
+                    # If we've processed multiple batches with no new emails, break
+                    if batch_count >= 3:
+                        logger.info("No new emails for 3 consecutive batches, stopping sync")
+                        break
                 
                 page_token = results.get('nextPageToken')
                 if not page_token:

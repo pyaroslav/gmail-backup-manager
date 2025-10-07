@@ -1411,6 +1411,56 @@ function showSearchPagination() {
     }
 }
 
+// Resume sync functionality
+function resumeSync() {
+    console.log('🔄 Resuming sync from where it left off...');
+    
+    // Show loading state
+    const resumeSyncBtn = document.getElementById('resumeSyncBtn');
+    const originalText = resumeSyncBtn.innerHTML;
+    resumeSyncBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Resuming...';
+    resumeSyncBtn.disabled = true;
+    
+    fetch('http://localhost:3002/api/sync/resume', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        console.log('📊 Resume sync response:', data);
+        
+        if (data.success) {
+            console.log('✅ Sync resumed successfully!');
+            
+            // Show success message
+            showNotification('Sync resumed successfully from where it left off!', 'success');
+            
+            // Update sync status
+            loadSyncMonitoring();
+            
+            // Log the resume action
+            addToSyncLog('SYNC RESUMED', `Resumed sync with configuration: ${JSON.stringify(data.resume_config)}`);
+            
+        } else {
+            console.error('❌ Failed to resume sync:', data.error);
+            showNotification(`Failed to resume sync: ${data.error}`, 'error');
+            addToSyncLog('SYNC RESUME FAILED', data.error);
+        }
+    })
+    .catch(error => {
+        console.error('❌ Error resuming sync:', error);
+        showNotification(`Error resuming sync: ${error.message}`, 'error');
+        addToSyncLog('SYNC RESUME ERROR', error.message);
+    })
+    .finally(() => {
+        // Restore button state
+        resumeSyncBtn.innerHTML = originalText;
+        resumeSyncBtn.disabled = false;
+    });
+}
+
 // Sync functionality
 function initializeSync() {
     // Initialize all sync buttons
@@ -1432,6 +1482,7 @@ function initializeSync() {
     startBackgroundSyncBtn.addEventListener('click', () => startBackgroundSync());
     stopBackgroundSyncBtn.addEventListener('click', () => stopBackgroundSync());
     startSyncBtn.addEventListener('click', () => startManualSync());
+    resumeSyncBtn.addEventListener('click', () => resumeSync());
     stopSyncBtn.addEventListener('click', () => stopSync());
     resetLastSyncBtn.addEventListener('click', () => resetLastSync());
     clearLogBtn.addEventListener('click', () => clearLog());
@@ -1440,8 +1491,16 @@ function initializeSync() {
     // Load initial sync monitoring data
     loadSyncMonitoring();
     
+    // Let the API data flow through naturally - no hardcoded values
+    console.log('✅ Sync page monitoring initialized - will use API data');
+    
+    // Check resume availability
+    checkResumeAvailability();
+    
     // Start periodic sync monitoring refresh (every 5 seconds)
     startSyncMonitoringRefresh();
+    
+    // Simple approach is now handled in the initialization above
     
     // Set default dates for date range sync
     setDefaultDates();
@@ -1458,6 +1517,7 @@ function setDefaultDates() {
 
 // Load sync status with better error handling
 function loadSyncStatus() {
+    console.log('🔄 loadSyncStatus called - this should not update total emails on sync page');
     // Use Node.js endpoints only to avoid hanging backend calls
     const endpoints = [
         'http://localhost:3002/api/db/sync-status',  // Node.js sync status
@@ -1473,10 +1533,14 @@ function loadSyncStatus() {
             const totalSyncedElement = document.getElementById('totalSynced');
             const syncDatabaseSizeElement = document.getElementById('syncDatabaseSize');
             
-            if (syncStatusElement) syncStatusElement.textContent = 'Status unavailable';
-            if (lastSyncTimeElement) lastSyncTimeElement.textContent = 'Unknown';
-            if (totalSyncedElement) totalSyncedElement.textContent = 'Loading...';
-            if (syncDatabaseSizeElement) syncDatabaseSizeElement.textContent = 'Loading...';
+            // Check if we're on the sync page before setting fallback values
+            const syncPageElement = document.querySelector('#syncPage');
+            const currentPage = syncPageElement && syncPageElement.style.display === 'block' ? 'sync' : 'other';
+            
+            if (syncStatusElement && currentPage !== 'sync') syncStatusElement.textContent = 'Status unavailable';
+            if (lastSyncTimeElement && currentPage !== 'sync') lastSyncTimeElement.textContent = 'Unknown';
+            if (totalSyncedElement && currentPage !== 'sync') totalSyncedElement.textContent = 'Loading...';
+            if (syncDatabaseSizeElement && currentPage !== 'sync') syncDatabaseSizeElement.textContent = 'Loading...';
             return;
         }
         
@@ -1504,30 +1568,45 @@ function loadSyncStatus() {
                 const totalSyncedElement = document.getElementById('totalSynced');
                 const syncDatabaseSizeElement = document.getElementById('syncDatabaseSize');
                 
-                if (data.status) {
-                    if (syncStatusElement) {
-                        syncStatusElement.textContent = data.sync_in_progress ? 'Sync in progress' : 'Ready to sync';
-                    }
-                    
-                    if (lastSyncTimeElement) {
-                        if (data.last_sync_time) {
-                            const lastSync = new Date(data.last_sync_time);
-                            lastSyncTimeElement.textContent = lastSync.toLocaleString();
-                        } else if (data.latest_email_date) {
-                            const latestEmail = new Date(data.latest_email_date);
-                            lastSyncTimeElement.textContent = latestEmail.toLocaleString();
-                        } else {
-                            lastSyncTimeElement.textContent = 'Recent';
+                // Check if we're on the sync page
+                const syncPageElement = document.querySelector('#syncPage');
+                const currentPage = syncPageElement && syncPageElement.style.display === 'block' ? 'sync' : 'other';
+                console.log('🔍 loadSyncStatus - currentPage:', currentPage, 'syncPage display:', syncPageElement?.style.display);
+                
+                // Only update sync status if we're not on the sync page (where loadSyncMonitoring handles it)
+                if (currentPage !== 'sync') {
+                    if (data.status) {
+                        if (syncStatusElement) {
+                            syncStatusElement.textContent = data.sync_in_progress ? 'Sync in progress' : 'Ready to sync';
                         }
+                        
+                        if (lastSyncTimeElement) {
+                            if (data.last_sync_time) {
+                                const lastSync = new Date(data.last_sync_time);
+                                lastSyncTimeElement.textContent = lastSync.toLocaleString();
+                            } else if (data.latest_email_date) {
+                                const latestEmail = new Date(data.latest_email_date);
+                                lastSyncTimeElement.textContent = latestEmail.toLocaleString();
+                            } else {
+                                lastSyncTimeElement.textContent = 'Recent';
+                            }
+                        }
+                    } else {
+                        if (syncStatusElement) syncStatusElement.textContent = 'Ready to sync';
+                        if (lastSyncTimeElement) lastSyncTimeElement.textContent = 'Recent';
                     }
-                } else {
-                    if (syncStatusElement) syncStatusElement.textContent = 'Ready to sync';
-                    if (lastSyncTimeElement) lastSyncTimeElement.textContent = 'Recent';
                 }
                 
-                if (totalSyncedElement) {
+                // Only update total emails if we're not on the sync page (where loadSyncMonitoring handles it)
+                if (totalSyncedElement && currentPage !== 'sync') {
+                    console.log('✅ loadSyncStatus updating total emails to:', data.total_emails);
                     totalSyncedElement.textContent = `${data.total_emails?.toLocaleString() || 0} emails`;
+                } else {
+                    console.log('🚫 loadSyncStatus skipping total emails update (on sync page)');
                 }
+                
+                // Debug: Check if we're actually on the sync page
+                console.log('🔍 loadSyncStatus debug - syncPage display:', syncPageElement?.style.display, 'currentPage:', currentPage);
                 
                 // Display database size in GB if available
                 console.log('Database size data:', { 
@@ -1535,7 +1614,8 @@ function loadSyncStatus() {
                     database_size_pretty: data.database_size_pretty 
                 });
                 
-                if (syncDatabaseSizeElement) {
+                // Only update database size if we're not on the sync page (where loadSyncMonitoring handles it)
+                if (syncDatabaseSizeElement && currentPage !== 'sync') {
                     if (data.database_size_gb !== undefined) {
                         syncDatabaseSizeElement.textContent = `${data.database_size_gb} GB`;
                         console.log('Set sync database size to:', `${data.database_size_gb} GB`);
@@ -1555,9 +1635,11 @@ function loadSyncStatus() {
                 if (data.sync_details && data.sync_in_progress) {
                     console.log('Calling displaySyncDetails with:', data.sync_details);
                     displaySyncDetails(data.sync_details);
+                    displayCurrentSyncProgress(data.sync_details);
                 } else {
                     console.log('Calling hideSyncDetails');
                     hideSyncDetails();
+                    hideCurrentSyncProgress();
                 }
                 
                 console.log(`Sync status loaded using: ${endpoint}`);
@@ -1566,7 +1648,7 @@ function loadSyncStatus() {
             }
         })
         .catch(error => {
-            console.log(`Endpoint ${endpoint} failed: ${error.message}`);
+            console.log(`❌ Endpoint ${endpoint} failed: ${error.message}`);
             currentEndpoint++;
             setTimeout(tryEndpoint, 500);
         });
@@ -3180,6 +3262,39 @@ function hideSyncDetails() {
     }
 }
 
+// Display current sync progress in the dedicated section
+function displayCurrentSyncProgress(syncDetails) {
+    const progressContainer = document.getElementById('currentSyncProgress');
+    if (!progressContainer) return;
+    
+    // Update the progress values
+    const sessionEmailsElement = document.getElementById('currentSessionEmails');
+    const emailsPerMinuteElement = document.getElementById('currentEmailsPerMinute');
+    const elapsedTimeElement = document.getElementById('currentElapsedTime');
+    
+    if (sessionEmailsElement) {
+        sessionEmailsElement.textContent = syncDetails.emails_processed?.toLocaleString() || '0';
+    }
+    
+    if (emailsPerMinuteElement) {
+        emailsPerMinuteElement.textContent = syncDetails.emails_per_minute?.toLocaleString() || '0';
+    }
+    
+    if (elapsedTimeElement) {
+        elapsedTimeElement.textContent = syncDetails.elapsed_time || '0:00';
+    }
+    
+    progressContainer.style.display = 'block';
+}
+
+// Hide current sync progress when no sync is running
+function hideCurrentSyncProgress() {
+    const progressContainer = document.getElementById('currentSyncProgress');
+    if (progressContainer) {
+        progressContainer.style.display = 'none';
+    }
+}
+
 // Periodic sync status refresh
 let syncStatusInterval = null;
 
@@ -3202,6 +3317,44 @@ function stopSyncStatusRefresh() {
     }
 }
 
+// Check if sync can be resumed
+function checkResumeAvailability() {
+    console.log('🔍 Checking resume availability...');
+    
+    fetch('http://localhost:3002/api/sync/resume-info')
+        .then(response => response.json())
+        .then(data => {
+            console.log('📊 Resume info:', data);
+            
+            const resumeSyncBtn = document.getElementById('resumeSyncBtn');
+            
+            if (data.success && data.resume_info.can_resume) {
+                console.log('✅ Resume available:', data.resume_info.resume_reason);
+                resumeSyncBtn.disabled = false;
+                resumeSyncBtn.title = `Resume from ${data.resume_info.resume_reason}`;
+                
+                // Add visual indicator
+                resumeSyncBtn.classList.add('btn-success');
+                resumeSyncBtn.classList.remove('btn-secondary');
+                
+            } else {
+                console.log('❌ Resume not available');
+                resumeSyncBtn.disabled = true;
+                resumeSyncBtn.title = 'No sync to resume';
+                
+                // Add visual indicator
+                resumeSyncBtn.classList.remove('btn-success');
+                resumeSyncBtn.classList.add('btn-secondary');
+            }
+        })
+        .catch(error => {
+            console.error('❌ Error checking resume availability:', error);
+            const resumeSyncBtn = document.getElementById('resumeSyncBtn');
+            resumeSyncBtn.disabled = true;
+            resumeSyncBtn.title = 'Error checking resume availability';
+        });
+}
+
 // Load real-time sync monitoring data
 function loadSyncMonitoring() {
     console.log('🔄 loadSyncMonitoring called - fetching latest sync status...');
@@ -3220,7 +3373,7 @@ function loadSyncMonitoring() {
             
             console.log('🔍 Sync progress check - is_active:', syncProgress.is_active, 'status:', syncProgress.status);
             
-            if (syncProgress.is_active) {
+            if (syncProgress.is_active && syncProgress.status !== 'stale') {
                 console.log('🟡 Sync is ACTIVE - updating UI to show sync in progress');
                 document.getElementById('syncStatus').textContent = 'Sync in progress';
                 
@@ -3243,6 +3396,29 @@ function loadSyncMonitoring() {
                 };
                 
                 displaySyncDetails(syncDetails);
+            } else if (syncProgress.status === 'stale') {
+                console.log('🟠 Sync is STALE - updating UI to show stale status');
+                document.getElementById('syncStatus').textContent = 'Sync stalled';
+                
+                // Enable start button, disable stop button
+                if (startSyncBtn) startSyncBtn.disabled = false;
+                if (stopSyncBtn) stopSyncBtn.disabled = true;
+                
+                // Display stale sync details
+                const syncDetails = {
+                    sync_type: syncProgress.sync_type,
+                    start_time: syncProgress.start_time,
+                    elapsed_time: syncProgress.elapsed_time,
+                    progress_percentage: syncProgress.progress_percentage,
+                    emails_processed: syncProgress.actual_synced || syncProgress.emails_processed,
+                    emails_per_minute: 0, // Stale sessions have 0 speed
+                    current_batch: syncProgress.current_batch,
+                    total_batches: syncProgress.total_batches,
+                    estimated_completion: 'Stalled',
+                    note: `Session became stale after 2+ hours. Last synced: ${syncProgress.actual_synced || 0} emails. Error: ${syncProgress.last_error || 'Unknown'}`
+                };
+                
+                displaySyncDetails(syncDetails);
             } else {
                 console.log('🟢 Sync is INACTIVE - updating UI to show ready to sync');
                 document.getElementById('syncStatus').textContent = 'Ready to sync';
@@ -3255,9 +3431,12 @@ function loadSyncMonitoring() {
                 hideSyncDetails();
             }
             
-            // Update database stats
-            document.getElementById('totalSynced').textContent = `${dbStats.total_emails.toLocaleString()} emails`;
-            document.getElementById('databaseSize').textContent = `${dbStats.database_size_gb} GB`;
+            // Update database stats (but don't touch total emails - let the simple interval handle it)
+            console.log('🔄 loadSyncMonitoring - database stats available:', dbStats);
+            
+            // Don't update total emails here - let the simple interval handle it
+            console.log('🔄 loadSyncMonitoring - skipping total emails update (handled by simple interval)');
+            document.getElementById('syncDatabaseSize').textContent = `${dbStats.database_size_gb} GB`;
             
             // Update last sync time
             if (dbStats.latest_email_date) {
@@ -3269,21 +3448,295 @@ function loadSyncMonitoring() {
             
         })
         .catch(error => {
-            console.error('Error loading sync monitoring:', error);
+            console.error('❌ Error loading sync monitoring:', error);
+            console.log('🔄 Falling back to loadSyncStatus due to error');
             // Fall back to regular sync status
             loadSyncStatus();
         });
 }
 
 // Start periodic sync monitoring refresh (every 5 seconds)
+// Let API data determine the correct value
+function forceUpdateTotalEmails() {
+    // This function is no longer needed - API data will be used
+    console.log('✅ Total emails will be updated via API data');
+}
+
+// Simple monitoring - let API data flow through
+function startTotalEmailsMonitoring() {
+    // This function is no longer needed - API data will be used
+    console.log('✅ Total emails monitoring disabled - using API data');
+}
+
 function startSyncMonitoringRefresh() {
     // Clear any existing interval
     if (syncStatusInterval) {
         clearInterval(syncStatusInterval);
     }
     
-    // Refresh every 5 seconds for real-time updates
+    // Refresh every 3 seconds for real-time updates
     syncStatusInterval = setInterval(() => {
+        console.log('🔄 Interval triggered - calling loadSyncMonitoring');
         loadSyncMonitoring();
-    }, 5000);
+    }, 3000);
 }
+
+// Notification System
+let notifications = [];
+
+// Load real notifications from API
+async function loadRealNotifications() {
+    try {
+        // Get sync status
+        const syncResponse = await fetch('/api/db/sync-status');
+        const syncData = await syncResponse.json();
+        
+        // Get dashboard data
+        const dashboardResponse = await fetch('/api/db/dashboard');
+        const dashboardData = await dashboardResponse.json();
+        
+        // Clear existing notifications
+        notifications = [];
+        
+        // Add sync status notification
+        if (syncData.sync_in_progress) {
+            notifications.push({
+                id: 1,
+                title: 'Sync In Progress',
+                message: `Currently syncing emails... ${syncData.total_emails?.toLocaleString() || 0} emails in database`,
+                time: 'Now',
+                type: 'info',
+                read: false
+            });
+        } else if (syncData.last_sync_time) {
+            const lastSync = new Date(syncData.last_sync_time);
+            const timeAgo = getTimeAgo(lastSync);
+            notifications.push({
+                id: 1,
+                title: 'Last Sync',
+                message: `Last sync completed ${timeAgo}`,
+                time: timeAgo,
+                type: 'success',
+                read: false
+            });
+        } else {
+            notifications.push({
+                id: 1,
+                title: 'No Recent Sync',
+                message: 'No sync activity detected',
+                time: 'Unknown',
+                type: 'warning',
+                read: false
+            });
+        }
+        
+        // Add database size notification
+        if (dashboardData.database_size_gb && dashboardData.database_size_gb > 10) {
+            notifications.push({
+                id: 2,
+                title: 'Database Size Alert',
+                message: `Database size is ${dashboardData.database_size_pretty || 'Unknown'}`,
+                time: 'Current',
+                type: 'warning',
+                read: false
+            });
+        }
+        
+        // Add email count notification
+        if (syncData.total_emails && syncData.total_emails > 1000000) {
+            notifications.push({
+                id: 3,
+                title: 'Large Email Database',
+                message: `${syncData.total_emails.toLocaleString()} emails stored`,
+                time: 'Current',
+                type: 'info',
+                read: false
+            });
+        }
+        
+        // Update notification count and render
+        updateNotificationCount();
+        if (document.getElementById('notificationDropdown')?.classList.contains('show')) {
+            renderNotifications();
+        }
+        
+        console.log('✅ Real notifications loaded:', notifications.length);
+        
+    } catch (error) {
+        console.error('❌ Error loading real notifications:', error);
+        // Fallback to basic notifications
+        notifications = [
+            {
+                id: 1,
+                title: 'System Status',
+                message: 'Gmail Backup Manager is running',
+                time: 'Now',
+                type: 'info',
+                read: false
+            }
+        ];
+        updateNotificationCount();
+    }
+}
+
+// Helper function to get time ago
+function getTimeAgo(date) {
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+    
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
+    if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+    return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+}
+
+// Initialize notification system
+function initNotifications() {
+    const notificationsBtn = document.getElementById('notificationsBtn');
+    const notificationDropdown = document.getElementById('notificationDropdown');
+    const notificationCount = document.getElementById('notificationCount');
+    const clearAllBtn = document.getElementById('clearAllNotifications');
+    
+    if (!notificationsBtn || !notificationDropdown) {
+        console.log('Notification elements not found');
+        return;
+    }
+    
+    // Load real notifications from API
+    loadRealNotifications();
+    
+    // Toggle dropdown on click
+    notificationsBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleNotificationDropdown();
+    });
+    
+    // Clear all notifications
+    if (clearAllBtn) {
+        clearAllBtn.addEventListener('click', () => {
+            clearAllNotifications();
+        });
+    }
+    
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!notificationsBtn.contains(e.target) && !notificationDropdown.contains(e.target)) {
+            closeNotificationDropdown();
+        }
+    });
+    
+    console.log('✅ Notification system initialized');
+}
+
+// Toggle notification dropdown
+function toggleNotificationDropdown() {
+    const notificationDropdown = document.getElementById('notificationDropdown');
+    if (notificationDropdown) {
+        if (notificationDropdown.classList.contains('show')) {
+            closeNotificationDropdown();
+        } else {
+            openNotificationDropdown();
+        }
+    }
+}
+
+// Open notification dropdown
+function openNotificationDropdown() {
+    const notificationDropdown = document.getElementById('notificationDropdown');
+    if (notificationDropdown) {
+        notificationDropdown.classList.add('show');
+        renderNotifications();
+    }
+}
+
+// Close notification dropdown
+function closeNotificationDropdown() {
+    const notificationDropdown = document.getElementById('notificationDropdown');
+    if (notificationDropdown) {
+        notificationDropdown.classList.remove('show');
+    }
+}
+
+// Render notifications in dropdown
+function renderNotifications() {
+    const notificationList = document.getElementById('notificationList');
+    if (!notificationList) return;
+    
+    if (notifications.length === 0) {
+        notificationList.innerHTML = '<div class="notification-item"><div class="notification-content"><div class="notification-message">No notifications</div></div></div>';
+        return;
+    }
+    
+    notificationList.innerHTML = notifications.map(notification => `
+        <div class="notification-item" data-id="${notification.id}">
+            <div class="notification-icon ${notification.type}">
+                <i class="fas ${getNotificationIcon(notification.type)}"></i>
+            </div>
+            <div class="notification-content">
+                <div class="notification-title">${notification.title}</div>
+                <div class="notification-message">${notification.message}</div>
+                <div class="notification-time">${notification.time}</div>
+            </div>
+        </div>
+    `).join('');
+}
+
+// Get icon for notification type
+function getNotificationIcon(type) {
+    const icons = {
+        success: 'fa-check',
+        info: 'fa-info',
+        warning: 'fa-exclamation',
+        error: 'fa-times'
+    };
+    return icons[type] || 'fa-info';
+}
+
+// Update notification count
+function updateNotificationCount() {
+    const notificationCount = document.getElementById('notificationCount');
+    if (notificationCount) {
+        const unreadCount = notifications.filter(n => !n.read).length;
+        notificationCount.textContent = unreadCount;
+        notificationCount.style.display = unreadCount > 0 ? 'block' : 'none';
+    }
+}
+
+// Clear all notifications
+function clearAllNotifications() {
+    notifications = [];
+    updateNotificationCount();
+    renderNotifications();
+    console.log('✅ All notifications cleared');
+}
+
+// Add new notification
+function addNotification(title, message, type = 'info') {
+    const notification = {
+        id: Date.now(),
+        title,
+        message,
+        time: 'Just now',
+        type,
+        read: false
+    };
+    
+    notifications.unshift(notification);
+    updateNotificationCount();
+    
+    // If dropdown is open, re-render
+    const notificationDropdown = document.getElementById('notificationDropdown');
+    if (notificationDropdown && notificationDropdown.classList.contains('show')) {
+        renderNotifications();
+    }
+    
+    console.log('✅ New notification added:', title);
+}
+
+// Initialize notifications when DOM is loaded
+document.addEventListener('DOMContentLoaded', () => {
+    initNotifications();
+});

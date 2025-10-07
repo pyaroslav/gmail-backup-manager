@@ -22,8 +22,14 @@ app.use(cors());
 // Parse JSON bodies
 app.use(express.json());
 
-// Serve static files
-app.use(express.static(path.join(__dirname)));
+// Serve static files with no caching
+app.use(express.static(path.join(__dirname), {
+    setHeaders: (res, path) => {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+    }
+}));
 
 // Database configuration
 const dbConfig = {
@@ -54,6 +60,9 @@ async function connectDB() {
 app.get('/api/db/email-count', async (req, res) => {
     try {
         const result = await client.query('SELECT COUNT(*) FROM emails');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
         res.json({
             total_emails: parseInt(result.rows[0].count),
             timestamp: new Date().toISOString(),
@@ -474,6 +483,8 @@ app.get('/api/db/sync-status', async (req, res) => {
             syncStatus = 'syncing';
             syncDetected = true;
             syncStartTime = currentTime;
+            // Reset email count history to only track changes from this sync session
+            emailCountHistory = emailCountHistory.filter(entry => entry.timestamp >= currentTime - 30000); // Keep only last 30 seconds
         } else if (hasRecentCountChanges) {
             syncInProgress = true;
             syncStatus = 'syncing';
@@ -489,6 +500,8 @@ app.get('/api/db/sync-status', async (req, res) => {
                 syncStartTime = null;
                 syncInProgress = false;
                 syncStatus = 'ready';
+                // Clear email count history when sync ends
+                emailCountHistory = [];
             }
         }
         
@@ -496,24 +509,34 @@ app.get('/api/db/sync-status', async (req, res) => {
         let backendTimeout = false;
         try {
             // Try to get background sync status from backend
-            const backendResponse = await fetch('http://localhost:8000/api/v1/test/background-sync/status', {
-                signal: AbortSignal.timeout(500) // 0.5 second timeout
+            const backendResponse = await fetch('http://gmail-backup-backend:8000/api/v1/test/background-sync/status', {
+                signal: AbortSignal.timeout(2000) // 2 second timeout
             });
             
             if (backendResponse.ok) {
                 const backendData = await backendResponse.json();
                 const syncData = backendData.sync_status || {};
-                syncInProgress = syncData.sync_in_progress || syncInProgress;
+                
+                // Use backend sync status as the primary source of truth
+                syncInProgress = syncData.sync_in_progress || false;
                 syncStatus = syncInProgress ? 'syncing' : 'ready';
+                
+                // Reset frontend sync detection when backend says no sync
+                if (!syncInProgress) {
+                    syncDetected = false;
+                    syncStartTime = null;
+                }
                 
                 if (syncData.stats && syncData.stats.last_sync_start) {
                     lastSyncTime = syncData.stats.last_sync_start;
+                } else if (syncData.last_sync_time) {
+                    lastSyncTime = syncData.last_sync_time;
                 }
                 
                 // Get detailed sync information
                 if (syncInProgress) {
                     try {
-                        const monitoringResponse = await fetch('http://localhost:8000/api/v1/test/sync/real-time-status', {
+                        const monitoringResponse = await fetch('http://gmail-backup-backend:8000/api/v1/test/sync/real-time-status', {
                             signal: AbortSignal.timeout(500)
                         });
                         
@@ -531,9 +554,17 @@ app.get('/api/db/sync-status', async (req, res) => {
             console.log('Backend sync status unavailable:', backendError.message);
             backendTimeout = true;
             
+            // If backend is unavailable, reset sync state to avoid stuck states
+            if (backendError.name === 'AbortError' || backendError.message.includes('aborted')) {
+                syncDetected = false;
+                syncStartTime = null;
+                syncInProgress = false;
+                syncStatus = 'ready';
+            }
+            
             // Try to detect sync by checking if there's an active sync process
             try {
-                const syncProcessResponse = await fetch('http://localhost:8000/api/v1/test/sync/status', {
+                const syncProcessResponse = await fetch('http://gmail-backup-backend:8000/api/v1/test/sync/status', {
                     signal: AbortSignal.timeout(300) // Quick timeout
                 });
                 
@@ -553,7 +584,7 @@ app.get('/api/db/sync-status', async (req, res) => {
         if (!syncInProgress) {
             try {
                 // Try to check if there's an active sync by looking at the sync progress endpoint
-                const progressResponse = await fetch('http://localhost:8000/api/v1/test/sync/progress', {
+                const progressResponse = await fetch('http://gmail-backup-backend:8000/api/v1/test/sync/progress', {
                     signal: AbortSignal.timeout(1000)
                 });
                 
@@ -603,7 +634,14 @@ app.get('/api/db/sync-status', async (req, res) => {
         
         // If we detected activity but no backend details, create basic sync details
         if (syncInProgress && !syncDetails) {
-            const avgChange = totalRecentChanges / recentChanges.length;
+            // Only count actual new emails added during this sync session
+            // Use the recent changes that happened after sync start time
+            const syncSessionChanges = recentChanges.filter(entry => 
+                entry.timestamp >= syncStartTime
+            );
+            const actualNewEmails = syncSessionChanges.reduce((sum, entry) => sum + entry.change, 0);
+            
+            const avgChange = syncSessionChanges.length > 0 ? actualNewEmails / syncSessionChanges.length : 0;
             const emailsPerMinute = Math.round(avgChange * 60 / 30); // Assuming 30-second intervals
             
             // Calculate elapsed time from actual start time
@@ -617,7 +655,7 @@ app.get('/api/db/sync-status', async (req, res) => {
                 start_time: new Date(syncStartTime).toISOString(),
                 elapsed_time: elapsedTime,
                 progress_percentage: 0,
-                emails_processed: totalRecentChanges,
+                emails_processed: actualNewEmails, // Only new emails in this session
                 emails_per_minute: emailsPerMinute,
                 current_batch: 1,
                 total_batches: 1
@@ -664,6 +702,11 @@ app.get('/api/db/sync-status', async (req, res) => {
 
 // Real-time sync monitoring endpoint (database-first approach)
 app.get('/api/db/sync-monitoring', async (req, res) => {
+    // Add cache-busting headers
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    
     try {
         const currentTime = Date.now();
         
@@ -734,34 +777,62 @@ app.get('/api/db/sync-monitoring', async (req, res) => {
                     const startTime = new Date(session.started_at).getTime();
                     const elapsedMs = currentTime - startTime;
                     const elapsedMinutes = elapsedMs / (1000 * 60);
+                    const elapsedHours = elapsedMinutes / 60;
                     
-                    // Calculate actual progress based on email count difference
-                    // Get the email count at the start of sync (approximate)
-                    const startEmailCount = 844613; // Approximate count when sync started
-                    const actualEmailsSynced = totalEmails - startEmailCount;
+                    // Check if sync session is stale (running for more than 2 hours without progress)
+                    const isStale = elapsedHours > 2;
                     
-                    syncProgress = {
-                        is_active: true,
-                        start_time: session.started_at,
-                        elapsed_time: formatElapsedTime(elapsedMs),
-                        emails_processed: actualEmailsSynced,
-                        emails_per_minute: elapsedMinutes > 0 ? Math.round(actualEmailsSynced / elapsedMinutes) : 0,
-                        progress_percentage: session.max_emails ? Math.min((actualEmailsSynced / session.max_emails) * 100, 95) : 0,
-                        estimated_completion: null,
-                        current_batch: session.batches_processed || 1,
-                        total_batches: session.batches_processed || 1,
-                        sync_type: session.sync_type || 'unknown',
-                        status: 'syncing',
-                        actual_synced: actualEmailsSynced,
-                        backend_status: 'active',
-                        session_id: session.id,
-                        sync_source: session.sync_source,
-                        query_filter: session.query_filter,
-                        start_date: session.start_date,
-                        max_emails: session.max_emails,
-                        error_count: session.error_count || 0,
-                        last_error: session.last_error_message
-                    };
+                    // Use the actual sync session data instead of calculating from total emails
+                    const actualEmailsSynced = session.emails_synced || 0;
+                    
+                    if (isStale) {
+                        // Mark stale session as inactive
+                        syncProgress = {
+                            is_active: false,
+                            start_time: session.started_at,
+                            elapsed_time: formatElapsedTime(elapsedMs),
+                            emails_processed: actualEmailsSynced,
+                            emails_per_minute: 0,
+                            progress_percentage: 100,
+                            estimated_completion: null,
+                            current_batch: session.batches_processed || 1,
+                            total_batches: session.batches_processed || 1,
+                            sync_type: session.sync_type || 'unknown',
+                            status: 'stale',
+                            actual_synced: actualEmailsSynced,
+                            backend_status: 'stale',
+                            session_id: session.id,
+                            sync_source: session.sync_source,
+                            query_filter: session.query_filter,
+                            start_date: session.start_date,
+                            max_emails: session.max_emails,
+                            error_count: session.error_count || 0,
+                            last_error: session.last_error_message || 'Session became stale after 2+ hours'
+                        };
+                    } else {
+                        syncProgress = {
+                            is_active: true,
+                            start_time: session.started_at,
+                            elapsed_time: formatElapsedTime(elapsedMs),
+                            emails_processed: actualEmailsSynced,
+                            emails_per_minute: elapsedMinutes > 0 ? Math.round(actualEmailsSynced / elapsedMinutes) : 0,
+                            progress_percentage: session.max_emails ? Math.min((actualEmailsSynced / session.max_emails) * 100, 95) : 0,
+                            estimated_completion: null,
+                            current_batch: session.batches_processed || 1,
+                            total_batches: session.batches_processed || 1,
+                            sync_type: session.sync_type || 'unknown',
+                            status: 'syncing',
+                            actual_synced: actualEmailsSynced,
+                            backend_status: 'active',
+                            session_id: session.id,
+                            sync_source: session.sync_source,
+                            query_filter: session.query_filter,
+                            start_date: session.start_date,
+                            max_emails: session.max_emails,
+                            error_count: session.error_count || 0,
+                            last_error: session.last_error_message
+                        };
+                    }
                     
                     // Calculate estimated completion if we have enough data
                     if (syncProgress.emails_per_minute > 0 && session.max_emails) {
@@ -819,16 +890,15 @@ app.get('/api/db/sync-monitoring', async (req, res) => {
                 let totalSynced = 0;
                 let isBackendSyncing = false;
                 
-                // Look for recent sync activity in logs
-                for (const line of logLines) {
+                // Look for the most recent sync activity in logs
+                for (let i = logLines.length - 1; i >= 0; i--) {
+                    const line = logLines[i];
                     if (line.includes('total synced:')) {
                         const match = line.match(/total synced: (\d+)/);
                         if (match) {
-                            const synced = parseInt(match[1]);
-                            if (synced > totalSynced) {
-                                totalSynced = synced;
-                                isBackendSyncing = true;
-                            }
+                            totalSynced = parseInt(match[1]);
+                            isBackendSyncing = true;
+                            break; // Use the most recent entry, not the highest
                         }
                     }
                 }
@@ -900,12 +970,12 @@ function formatElapsedTime(milliseconds) {
 // Sync control endpoints
 app.post('/api/sync/start', async (req, res) => {
     try {
-        const { sync_type = 'full', max_emails = 100, start_date } = req.body;
+        const { sync_type = 'full', max_emails = 100, start_date, resume_mode = false } = req.body;
         
         console.log(`Sync start request: ${sync_type} sync with max_emails=${max_emails}${start_date ? `, start_date=${start_date}` : ''}`);
         
-        // Check if sync is already active
-        if (syncControlState.isActive) {
+        // Check if sync is already active (unless this is a resume request)
+        if (syncControlState.isActive && !resume_mode) {
             console.log('Sync already active, rejecting new request');
             return res.status(409).json({
                 success: false,
@@ -940,8 +1010,8 @@ app.post('/api/sync/start', async (req, res) => {
                 const timeDiff = currentTime - syncStartTime;
                 const fiveMinutes = 5 * 60 * 1000;
                 
-                if (timeDiff < fiveMinutes) {
-                    // Recent sync, reject the request
+                if (timeDiff < fiveMinutes && !resume_mode) {
+                    // Recent sync, reject the request (unless resuming)
                     return res.status(409).json({
                         success: false,
                         message: 'Sync already in progress',
@@ -960,7 +1030,8 @@ app.post('/api/sync/start', async (req, res) => {
                     await client.query(`
                         UPDATE sync_sessions 
                         SET status = 'stopped', 
-                            completed_at = NOW() 
+                            completed_at = NOW(),
+                            notes = CONCAT(COALESCE(notes, ''), ' - Cleaned up for resume')
                         WHERE id = $1
                     `, [activeSync.id]);
                     console.log(`Cleaned up stuck sync session ${activeSync.id}`);
@@ -979,19 +1050,40 @@ app.post('/api/sync/start', async (req, res) => {
         console.log('Sync control state updated:', syncControlState);
         
         // Determine the correct backend endpoint based on sync type
-        let backendUrl = `http://localhost:8000/api/v1/test/sync/start-${sync_type}?max_emails=${max_emails}`;
+        let backendUrl = `http://gmail-backup-backend:8000/api/v1/test/sync/start-${sync_type}?max_emails=${max_emails}`;
         
         if (sync_type === 'date-range' && start_date) {
-            backendUrl = `http://localhost:8000/api/v1/test/sync/start-from-date?start_date=${start_date}&max_emails=${max_emails}`;
+            backendUrl = `http://gmail-backup-backend:8000/api/v1/test/sync/start-from-date?start_date=${start_date}&max_emails=${max_emails}`;
         }
         
         console.log('Calling backend endpoint:', backendUrl);
         
-        // Call the backend sync endpoint with timeout
-        const response = await fetch(backendUrl, {
-            method: 'POST',
-            signal: AbortSignal.timeout(10000) // 10 second timeout
-        });
+        // Call the backend sync endpoint with enhanced timeout and retry logic
+        let response;
+        let retryCount = 0;
+        const maxRetries = 3;
+        
+        while (retryCount < maxRetries) {
+            try {
+                response = await fetch(backendUrl, {
+                    method: 'POST',
+                    signal: AbortSignal.timeout(30000) // 30 second timeout
+                });
+                break; // Success, exit retry loop
+            } catch (fetchError) {
+                retryCount++;
+                console.log(`Backend sync attempt ${retryCount} failed:`, fetchError.message);
+                
+                if (retryCount >= maxRetries) {
+                    throw new Error(`Backend sync failed after ${maxRetries} attempts. Last error: ${fetchError.message}`);
+                }
+                
+                // Wait before retry (exponential backoff)
+                const waitTime = Math.min(1000 * Math.pow(2, retryCount - 1), 5000);
+                console.log(`Waiting ${waitTime}ms before retry...`);
+                await new Promise(resolve => setTimeout(resolve, waitTime));
+            }
+        }
         
         if (response.ok) {
             const data = await response.json();
@@ -1002,11 +1094,16 @@ app.post('/api/sync/start', async (req, res) => {
                 syncControlState.sessionId = data.session_id;
             }
             
+            const successMessage = resume_mode ? 
+                `${sync_type} sync resumed successfully from where it left off` : 
+                `${sync_type} sync started successfully`;
+            
             res.json({
                 success: true,
-                message: `${sync_type} sync started successfully`,
+                message: successMessage,
                 data: data,
                 sync_control_state: syncControlState,
+                resume_mode: resume_mode,
                 timestamp: new Date().toISOString()
             });
         } else {
@@ -1080,7 +1177,7 @@ app.post('/api/sync/stop', async (req, res) => {
         
         // First try the backend stop endpoint with timeout
         try {
-            const response = await fetch('http://localhost:8000/api/v1/test/sync/stop', {
+            const response = await fetch('http://gmail-backup-backend:8000/api/v1/test/sync/stop', {
                 method: 'POST',
                 signal: AbortSignal.timeout(3000) // 3 second timeout
             });
@@ -1264,6 +1361,210 @@ app.post('/api/sync/cleanup', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error cleaning up sync sessions',
+            error: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// Resume sync endpoint - handles graceful resumption from where it left off
+app.post('/api/sync/resume', async (req, res) => {
+    try {
+        console.log('Resuming sync from where it left off...');
+        
+        // First, clean up any stale sessions
+        const cleanupResult = await client.query(`
+            UPDATE sync_sessions 
+            SET status = 'stopped', 
+                completed_at = NOW(),
+                notes = CONCAT(COALESCE(notes, ''), ' - Auto-stopped due to inactivity')
+            WHERE status IN ('started', 'running') 
+            AND started_at < NOW() - INTERVAL '2 hours'
+        `);
+        
+        if (cleanupResult.rowCount > 0) {
+            console.log(`Cleaned up ${cleanupResult.rowCount} stale sync sessions`);
+        }
+        
+        // Get the latest completed sync to determine resumption point
+        const lastSyncResult = await client.query(`
+            SELECT 
+                id, sync_type, emails_synced, started_at, completed_at,
+                max_emails, query_filter, start_date
+            FROM sync_sessions 
+            WHERE status = 'completed' OR status = 'stopped'
+            ORDER BY completed_at DESC 
+            LIMIT 1
+        `);
+        
+        let resumeConfig = {
+            sync_type: 'full',
+            max_emails: 1000,
+            start_date: null,
+            resume_from_last: true
+        };
+        
+        if (lastSyncResult.rows.length > 0) {
+            const lastSync = lastSyncResult.rows[0];
+            console.log('Found last sync session:', lastSync);
+            
+            // Use the same configuration as the last sync
+            resumeConfig = {
+                sync_type: lastSync.sync_type || 'full',
+                max_emails: lastSync.max_emails || 1000,
+                start_date: lastSync.start_date,
+                query_filter: lastSync.query_filter,
+                resume_from_last: true,
+                last_sync_info: {
+                    session_id: lastSync.id,
+                    emails_synced: lastSync.emails_synced,
+                    completed_at: lastSync.completed_at
+                }
+            };
+        }
+        
+        // Get current email count to show progress
+        const emailCountResult = await client.query('SELECT COUNT(*) as total_emails FROM emails');
+        const currentEmailCount = parseInt(emailCountResult.rows[0].total_emails);
+        
+        console.log('Resume configuration:', resumeConfig);
+        console.log('Current email count:', currentEmailCount);
+        
+        // Start new sync with resume configuration
+        const syncStartBody = {
+            sync_type: resumeConfig.sync_type,
+            max_emails: resumeConfig.max_emails,
+            start_date: resumeConfig.start_date,
+            resume_mode: true
+        };
+        
+        // Call the sync start endpoint internally
+        const startResponse = await fetch('http://localhost:3002/api/sync/start', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(syncStartBody)
+        });
+        
+        if (startResponse.ok) {
+            const startData = await startResponse.json();
+            
+            res.json({
+                success: true,
+                message: 'Sync resumed successfully from where it left off',
+                resume_config: resumeConfig,
+                current_email_count: currentEmailCount,
+                sync_start_data: startData,
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            const errorData = await startResponse.json();
+            res.status(500).json({
+                success: false,
+                message: 'Failed to resume sync',
+                error: errorData.error || 'Unknown error',
+                resume_config: resumeConfig,
+                timestamp: new Date().toISOString()
+            });
+        }
+        
+    } catch (error) {
+        console.error('Error resuming sync:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error resuming sync',
+            error: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// Enhanced sync status endpoint with resumption information
+app.get('/api/sync/resume-info', async (req, res) => {
+    try {
+        // Get the latest sync session for resumption analysis
+        const lastSyncResult = await client.query(`
+            SELECT 
+                id, sync_type, status, emails_synced, started_at, completed_at,
+                max_emails, query_filter, start_date, notes
+            FROM sync_sessions 
+            ORDER BY started_at DESC 
+            LIMIT 1
+        `);
+        
+        // Get current email count
+        const emailCountResult = await client.query('SELECT COUNT(*) as total_emails FROM emails');
+        const currentEmailCount = parseInt(emailCountResult.rows[0].total_emails);
+        
+        // Get latest email date
+        const latestEmailResult = await client.query(`
+            SELECT MAX(date_received) as latest_email_date 
+            FROM emails
+        `);
+        const latestEmailDate = latestEmailResult.rows[0].latest_email_date;
+        
+        let resumeInfo = {
+            can_resume: false,
+            resume_reason: null,
+            last_sync: null,
+            current_state: {
+                total_emails: currentEmailCount,
+                latest_email_date: latestEmailDate
+            },
+            resume_config: null
+        };
+        
+        if (lastSyncResult.rows.length > 0) {
+            const lastSync = lastSyncResult.rows[0];
+            
+            // Determine if we can resume
+            const isStale = lastSync.status === 'started' || lastSync.status === 'running';
+            const isRecent = lastSync.completed_at && 
+                (new Date() - new Date(lastSync.completed_at)) < (24 * 60 * 60 * 1000); // 24 hours
+            
+            resumeInfo.last_sync = {
+                session_id: lastSync.id,
+                sync_type: lastSync.sync_type,
+                status: lastSync.status,
+                emails_synced: lastSync.emails_synced,
+                started_at: lastSync.started_at,
+                completed_at: lastSync.completed_at,
+                notes: lastSync.notes
+            };
+            
+            if (isStale) {
+                resumeInfo.can_resume = true;
+                resumeInfo.resume_reason = 'stale_session';
+                resumeInfo.resume_config = {
+                    sync_type: lastSync.sync_type || 'full',
+                    max_emails: lastSync.max_emails || 1000,
+                    start_date: lastSync.start_date,
+                    query_filter: lastSync.query_filter
+                };
+            } else if (isRecent) {
+                resumeInfo.can_resume = true;
+                resumeInfo.resume_reason = 'continue_from_last';
+                resumeInfo.resume_config = {
+                    sync_type: lastSync.sync_type || 'full',
+                    max_emails: lastSync.max_emails || 1000,
+                    start_date: lastSync.start_date,
+                    query_filter: lastSync.query_filter
+                };
+            }
+        }
+        
+        res.json({
+            success: true,
+            resume_info: resumeInfo,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('Error getting resume info:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error getting resume information',
             error: error.message,
             timestamp: new Date().toISOString()
         });
@@ -1579,6 +1880,32 @@ app.get('/api/analytics/trends', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error fetching email trends',
+            error: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// Reset sync context endpoint
+app.post('/api/db/reset-sync-context', (req, res) => {
+    try {
+        // Reset all sync tracking variables
+        syncDetected = false;
+        syncStartTime = null;
+        emailCountHistory = [];
+        lastEmailCount = 0;
+        lastCountCheck = Date.now();
+        
+        res.json({
+            success: true,
+            message: 'Sync context reset successfully',
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('Error resetting sync context:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error resetting sync context',
             error: error.message,
             timestamp: new Date().toISOString()
         });

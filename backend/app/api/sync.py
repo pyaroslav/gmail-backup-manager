@@ -13,7 +13,7 @@ from ..services.sync_service import OptimizedSyncService
 from ..services.gmail_service import GmailService
 from ..services.auth_service import get_current_user
 
-router = APIRouter(prefix="/sync", tags=["sync"])
+router = APIRouter(tags=["sync"])
 logger = logging.getLogger(__name__)
 
 @router.post("/start")
@@ -103,6 +103,28 @@ async def get_sync_progress(
         "emails_processed": 0,  # Placeholder
         "estimated_time_remaining": 0  # Placeholder
     }
+
+@router.post("/stop")
+async def stop_sync(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Stop the current sync process for the user
+    """
+    try:
+        sync_service = OptimizedSyncService()
+        stopped = sync_service.request_stop_sync(current_user.id)
+        
+        return {
+            "message": "Sync stop requested" if stopped else "No active sync found",
+            "user_id": current_user.id,
+            "stopped": stopped
+        }
+        
+    except Exception as e:
+        logger.error(f"Error stopping sync: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/test-connection")
 async def test_gmail_connection(

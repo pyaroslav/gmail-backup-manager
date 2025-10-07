@@ -42,6 +42,10 @@ psutil==5.9.6
 celery==5.3.4
 redis==5.0.1
 
+# HTTP client for background sync
+aiohttp==3.12.15
+httpx==0.28.1
+
 # Search
 elasticsearch==8.11.0
 

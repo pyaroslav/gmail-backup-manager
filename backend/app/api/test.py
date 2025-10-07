@@ -18,7 +18,7 @@ from sqlalchemy import text
 from pathlib import Path
 import psycopg2
 from psycopg2.extras import RealDictCursor
-# import psutil  # Temporarily commented out to fix startup issue
+import psutil
 
 logger = logging.getLogger(__name__)
 
@@ -544,6 +544,45 @@ async def start_test_sync(
         return {
             "error": str(e),
             "status": "error"
+        }
+
+@router.post("/sync/start-quick")
+async def start_quick_sync(
+    max_emails: int = 1000,
+    db: Session = Depends(get_db)
+):
+    """Start a quick sync for recent emails (no auth required)"""
+    try:
+        # Get the first user from database
+        user = db.query(User).first()
+        if not user:
+            return {
+                "error": "No users found in database",
+                "status": "no_users"
+            }
+        
+        from ..services.sync_service import OptimizedSyncService
+        sync_service = OptimizedSyncService()
+        
+        # Start quick sync (same as full sync but with different name)
+        emails_synced = sync_service.sync_user_emails_full(user, max_emails)
+        
+        return {
+            "message": "Quick sync completed",
+            "user_id": user.id,
+            "result": {
+                "emails_synced": emails_synced,
+                "max_emails": max_emails,
+                "sync_type": "quick"
+            },
+            "status": "success"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error during quick sync: {e}")
+        return {
+            "error": str(e),
+            "status": "failed"
         }
 
 @router.post("/sync/start-full")
@@ -2610,13 +2649,120 @@ async def get_file_cache_count():
             "timestamp": datetime.now().isoformat()
         }
 
+@router.post("/sync/cleanup-stale")
+async def cleanup_stale_sync_sessions():
+    """Clean up stale sync sessions (no auth required)"""
+    try:
+        from ..services.sync_session_service import SyncSessionService
+        
+        cleaned_count = SyncSessionService.cleanup_stale_sessions(timeout_minutes=30)
+        
+        return {
+            "message": f"Cleaned up {cleaned_count} stale sync sessions",
+            "cleaned_count": cleaned_count,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error cleaning up stale sync sessions: {e}")
+        return {
+            "error": str(e),
+            "cleaned_count": 0,
+            "timestamp": datetime.now().isoformat()
+        }
+
+@router.get("/sync/progress")
+async def get_sync_progress():
+    """Get sync progress for testing (no auth required)"""
+    try:
+        from ..services.background_sync_service import background_sync_service
+        from datetime import datetime, timedelta
+        
+        # Get background sync status
+        sync_status = background_sync_service.get_sync_status()
+        
+        # Get current database email count
+        try:
+            conn = psycopg2.connect(
+                host="postgres",
+                database="gmail_backup",
+                user="gmail_user",
+                password="gmail_password",
+                options="-c statement_timeout=5000"
+            )
+            
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM emails")
+                current_email_count = cur.fetchone()[0]
+                
+                # Get latest sync session
+                cur.execute("""
+                    SELECT id, status, emails_synced, emails_processed, started_at, completed_at 
+                    FROM sync_sessions 
+                    ORDER BY started_at DESC 
+                    LIMIT 1
+                """)
+                session_result = cur.fetchone()
+                
+            conn.close()
+        except Exception as db_error:
+            logger.error(f"Database error in sync progress: {db_error}")
+            current_email_count = 0
+            session_result = None
+        
+        # Calculate sync progress
+        sync_progress = {
+            "is_active": sync_status.get("sync_in_progress", False),
+            "sync_type": "background" if sync_status.get("sync_in_progress") else "none",
+            "emails_processed": 0,
+            "emails_synced": 0,
+            "progress_percentage": 0,
+            "current_email_count": current_email_count
+        }
+        
+        # If there's an active session, get its details
+        if session_result:
+            session_id, status, emails_synced, emails_processed, started_at, completed_at = session_result
+            
+            sync_progress.update({
+                "session_id": session_id,
+                "status": status,
+                "emails_synced": emails_synced or 0,
+                "emails_processed": emails_processed or 0,
+                "started_at": started_at.isoformat() if started_at else None,
+                "completed_at": completed_at.isoformat() if completed_at else None
+            })
+            
+            # Calculate progress percentage based on emails processed
+            if emails_processed and emails_processed > 0:
+                sync_progress["progress_percentage"] = min(100, round((emails_synced / max(emails_processed, 1)) * 100, 1))
+        
+        return {
+            "sync_progress": sync_progress,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting sync progress: {e}")
+        return {
+            "error": str(e),
+            "sync_progress": {
+                "is_active": False,
+                "sync_type": "none",
+                "emails_processed": 0,
+                "emails_synced": 0,
+                "progress_percentage": 0
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+
 @router.get("/sync/real-time-status")
 async def get_real_time_sync_status():
     """Get comprehensive real-time sync status with progress, timing, and logs"""
     try:
         from ..services.background_sync_service import background_sync_service
         from datetime import datetime, timedelta
-        # import psutil  # Temporarily commented out to fix startup issue
+        import psutil
         import os
         
         # Get background sync status
@@ -2643,7 +2789,8 @@ async def get_real_time_sync_status():
                 
                 # Get sync start time from background service
                 cur.execute("SELECT created_at FROM emails ORDER BY created_at DESC LIMIT 1")
-                last_sync_time = cur.fetchone()[0] if cur.fetchone() else None
+                last_sync_result = cur.fetchone()
+                last_sync_time = last_sync_result[0] if last_sync_result else None
                 
             conn.close()
         except Exception as db_error:

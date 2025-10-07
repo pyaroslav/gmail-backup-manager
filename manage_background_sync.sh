@@ -65,7 +65,7 @@ start_service() {
     
     # Start the background sync service
     cd "$SCRIPT_DIR"
-    nohup python3 "$SYNC_SCRIPT" > "$LOG_FILE" 2>&1 &
+    nohup ./backend/venv/bin/python "$SYNC_SCRIPT" > "$LOG_FILE" 2>&1 &
     local pid=$!
     echo $pid > "$PID_FILE"
     

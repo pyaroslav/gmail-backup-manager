@@ -12,8 +12,7 @@ services:
       # PostgreSQL configuration for better performance during sync
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - 5fda91f7e3c67ff2097c3fb103cbe0f9e200d0f665739d8280c5bb20664461bc:/var/lib/postgresql/data
       - ./database/postgresql.conf:/etc/postgresql/postgresql.conf
     ports:
       - "5432:5432"
@@ -41,7 +40,7 @@ services:
       dockerfile: Dockerfile
     container_name: gmail-backup-backend
     environment:
-      - DATABASE_URL=postgresql://gmail_user:gmail_password@postgres:5432/gmail_backup
+      - DATABASE_URL=postgresql://gmail_user:gmail_password@gmail-backup-postgres:5432/gmail_backup
       - REDIS_URL=redis://redis:6379
       - GMAIL_CLIENT_ID=${GMAIL_CLIENT_ID}
       - GMAIL_CLIENT_SECRET=${GMAIL_CLIENT_SECRET}
@@ -73,6 +72,8 @@ services:
       - DB_NAME=gmail_backup
       - DB_USER=gmail_user
       - DB_PASSWORD=gmail_password
+    volumes:
+      - ./frontend:/app
     ports:
       - "3002:3002"
     depends_on:
@@ -106,6 +107,9 @@ volumes:
     driver: local
   attachments_data:
     driver: local
+  # External volume containing the original Gmail backup data
+  5fda91f7e3c67ff2097c3fb103cbe0f9e200d0f665739d8280c5bb20664461bc:
+    external: true
 
 networks:
   gmail-backup-network:

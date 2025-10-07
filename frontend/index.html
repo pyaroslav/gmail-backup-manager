@@ -24,10 +24,25 @@
                     <button class="btn-icon" id="themeToggle">
                         <i class="fas fa-sun"></i>
                     </button>
-                    <button class="btn-icon" id="notificationsBtn">
-                        <i class="fas fa-bell"></i>
-                        <span class="notification-badge">3</span>
-                    </button>
+                    <div class="notification-container">
+                        <button class="btn-icon" id="notificationsBtn">
+                            <i class="fas fa-bell"></i>
+                            <span class="notification-badge" id="notificationCount">0</span>
+                        </button>
+                        <div class="notification-dropdown" id="notificationDropdown">
+                            <div class="notification-header">
+                                <h3>Notifications</h3>
+                                <button class="btn-clear" id="clearAllNotifications">Clear All</button>
+                            </div>
+                            <div class="notification-list" id="notificationList">
+                                <div class="notification-item">
+                                    <div class="notification-content">
+                                        <div class="notification-message">Loading notifications...</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="user-info">
                         <span class="user-email">test@example.com</span>
                         <div class="user-avatar">
@@ -304,7 +319,7 @@
                     <div class="status-card">
                         <i class="fas fa-envelope"></i>
                         <div class="status-info">
-                            <h3>Total Synced</h3>
+                            <h3>Total Emails in Database</h3>
                             <p id="totalSynced">0 emails</p>
                         </div>
                     </div>
@@ -320,6 +335,25 @@
                 <!-- Current Sync Details -->
                 <div class="sync-details" id="syncInfoContainer" style="display: none;">
                     <!-- Sync details will be populated by JavaScript -->
+                </div>
+
+                <!-- Current Sync Progress -->
+                <div class="sync-progress" id="currentSyncProgress" style="display: none;">
+                    <h3>Current Sync Progress</h3>
+                    <div class="progress-info">
+                        <div class="progress-item">
+                            <span class="label">New Emails This Session:</span>
+                            <span class="value" id="currentSessionEmails">0</span>
+                        </div>
+                        <div class="progress-item">
+                            <span class="label">Emails Per Minute:</span>
+                            <span class="value" id="currentEmailsPerMinute">0</span>
+                        </div>
+                        <div class="progress-item">
+                            <span class="label">Elapsed Time:</span>
+                            <span class="value" id="currentElapsedTime">0:00</span>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Sync Options -->
@@ -403,6 +437,10 @@
                     <button class="btn btn-primary" id="startSync">
                         <i class="fas fa-sync"></i>
                         Start Manual Sync
+                    </button>
+                    <button class="btn btn-success" id="resumeSyncBtn">
+                        <i class="fas fa-play-circle"></i>
+                        Resume Sync
                     </button>
                     <button class="btn btn-secondary" id="stopSync" disabled>
                         <i class="fas fa-stop"></i>
@@ -754,6 +792,6 @@
     <!-- Note: Frontend timeout is 3 seconds, but sync-status endpoint takes ~5 seconds. 
          The endpoint will timeout and fall back to email-count endpoint which doesn't have sync details. -->
     <!-- Real-time sync monitoring with improved activity detection -->
-            <script src="script.js?v=2025-08-18-16-20"></script>
+            <script src="script.js?v=2025-08-19-23-40"></script>
 </body>
 </html>
