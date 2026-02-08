@@ -414,8 +414,11 @@ async def get_test_sync_status(db: Session = Depends(get_frontend_db)):
                 "status": "no_users"
             }
         
-        # Get basic sync statistics
-        total_emails = db.query(Email).count()
+        # Get basic sync statistics (fast estimate to avoid slow COUNT(*) on large table)
+        total_emails_row = db.execute(text(
+            "SELECT reltuples::bigint AS count FROM pg_class WHERE relname = 'emails'"
+        )).fetchone()
+        total_emails = int(total_emails_row[0]) if total_emails_row else 0
         last_sync = user.last_sync.isoformat() if user.last_sync else None
 
         # Determine real-time sync status from sync_sessions
