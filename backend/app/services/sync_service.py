@@ -17,6 +17,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text, func
 from sqlalchemy.exc import SQLAlchemyError
 
+from googleapiclient.errors import HttpError
+
 from ..models.database import SessionLocal, get_db
 from ..models.email import Email, EmailAttachment, EmailLabel
 from ..models.user import User
@@ -273,7 +275,13 @@ class OptimizedSyncService:
         logger.info(f"Sync completed: {emails_synced} emails synced")
         return emails_synced
     
-    def sync_user_emails_from_date(self, user: User, start_date: str, max_emails: int = None) -> int:
+    def sync_user_emails_from_date(
+        self,
+        user: User,
+        start_date: str,
+        max_emails: int = None,
+        existing_session_id: Optional[int] = None,
+    ) -> int:
         """
         Sync emails for a user from a specific date (format: YYYY/MM/DD)
         Example: sync_user_emails_from_date(user, "2011/01/01") will sync emails from 2011 onwards
@@ -281,28 +289,59 @@ class OptimizedSyncService:
         if not self.gmail_service.authenticate_user(user):
             raise Exception("Failed to authenticate with Gmail")
         
-        # Create sync session to track this sync
-        sync_session = None
+        # Create (or reuse) sync session to track this sync
+        sync_session: Optional[SyncSession] = None
         emails_synced = 0
+        emails_processed = 0
+        emails_skipped = 0
+        batches_processed = 0
+        error_count = 0
         page_token = None
         api_batch_size = 100  # Reduced batch size to avoid memory issues
         
-        try:
-            # Create sync session
-            sync_session = SyncSessionService.create_sync_session(
-                user=user,
-                sync_type='date_range',
-                sync_source='api',
-                max_emails=max_emails,
-                start_date=start_date,
-                query_filter=f'after:{start_date}',
-                notes=f'Date range sync from {start_date}'
-            )
-            logger.info(f"Started date range sync session {sync_session.id} for user {user.id}")
-            
-        except Exception as e:
-            logger.error(f"Failed to create sync session: {e}")
-            # Continue without session tracking if it fails
+        if existing_session_id is not None:
+            try:
+                with SessionLocal() as db:
+                    sync_session = (
+                        db.query(SyncSession)
+                        .filter(SyncSession.id == existing_session_id, SyncSession.user_id == user.id)
+                        .first()
+                    )
+                    if sync_session:
+                        # Detach to use id fields only; progress updates happen via SyncSessionService
+                        logger.info(
+                            f"Resuming date range sync with existing session {sync_session.id} for user {user.id}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Requested existing session {existing_session_id} not found for user {user.id}; "
+                            "creating a new session"
+                        )
+                        existing_session_id = None
+            except Exception as e:
+                logger.error(f"Failed to load existing sync session {existing_session_id}: {e}")
+                existing_session_id = None
+
+        if existing_session_id is None:
+            try:
+                sync_session = SyncSessionService.create_sync_session(
+                    user=user,
+                    sync_type='date_range',
+                    sync_source='api',
+                    max_emails=max_emails,
+                    start_date=start_date,
+                    query_filter=f'after:{start_date}',
+                    notes=f'Date range sync from {start_date}',
+                )
+                logger.info(f"Started date range sync session {sync_session.id} for user {user.id}")
+            except Exception as e:
+                logger.error(f"Failed to create sync session: {e}")
+                sync_session = None
+
+        # Mark as active sync for stop control (best-effort)
+        if sync_session:
+            _active_syncs[user.id] = sync_session.id
+            _sync_stop_flags[sync_session.id] = False
         
         try:
             logger.info(f"Starting sync from date: {start_date}")
@@ -332,17 +371,50 @@ class OptimizedSyncService:
                 logger.info(f"Processing batch of {len(messages)} emails (total synced: {emails_synced})")
                 
                 # Process emails sequentially to avoid memory issues
+                batch_synced = 0
+                batch_processed = 0
                 for message in messages:
                     try:
+                        batch_processed += 1
+                        emails_processed += 1
                         if self._process_single_email(user, message['id']):
                             emails_synced += 1
+                            batch_synced += 1
                             
                             if emails_synced % 25 == 0:  # Log every 25 emails
                                 logger.info(f"Progress: {emails_synced} emails synced")
                                 
                     except Exception as e:
                         logger.error(f"Error processing email {message['id']}: {e}")
+                        error_count += 1
+                        # Persist error info (best-effort)
+                        if sync_session:
+                            try:
+                                SyncSessionService.update_sync_progress(
+                                    sync_session.id,
+                                    error_count=error_count,
+                                    last_error_message=str(e),
+                                )
+                            except Exception:
+                                pass
                         continue
+
+                emails_skipped = max(0, emails_processed - emails_synced)
+                batches_processed += 1
+                
+                # Update sync session progress after each batch (best-effort)
+                if sync_session:
+                    try:
+                        SyncSessionService.update_sync_progress(
+                            sync_session.id,
+                            emails_processed=emails_processed,
+                            emails_synced=emails_synced,
+                            emails_skipped=emails_skipped,
+                            batches_processed=batches_processed,
+                            error_count=error_count,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to update date-range sync progress for session {sync_session.id}: {e}")
                 
                 page_token = results.get('nextPageToken')
                 if not page_token:
@@ -353,12 +425,57 @@ class OptimizedSyncService:
                     logger.info(f"Reached max emails limit: {max_emails}")
                     break
                 
+                # Check if stop was requested
+                if sync_session:
+                    self._check_stop_requested(sync_session.id)
+
                 # Add a small delay to avoid rate limiting
                 time.sleep(0.1)
                     
+        except SyncStopRequested as e:
+            logger.info(f"Date-range sync stopped by user request: {e}")
+            if sync_session:
+                try:
+                    # Mark failed first, then overwrite to cancelled for semantics
+                    SyncSessionService.fail_sync_session(sync_session.id, "Sync stopped by user request")
+                    with SessionLocal() as db:
+                        session_obj = db.query(SyncSession).filter(SyncSession.id == sync_session.id).first()
+                        if session_obj:
+                            session_obj.status = 'cancelled'
+                            db.commit()
+                except Exception as session_error:
+                    logger.error(f"Failed to mark date-range sync session as cancelled: {session_error}")
+            return emails_synced
+
         except Exception as e:
             logger.error(f"Error in date-based email sync: {e}")
+            if sync_session:
+                try:
+                    SyncSessionService.fail_sync_session(sync_session.id, str(e))
+                except Exception as session_error:
+                    logger.error(f"Failed to mark date-range sync session as failed: {session_error}")
             raise
+            
+        finally:
+            # Cleanup active sync tracking (best-effort)
+            if sync_session and user.id in _active_syncs:
+                del _active_syncs[user.id]
+                if sync_session.id in _sync_stop_flags:
+                    del _sync_stop_flags[sync_session.id]
+
+        # Mark sync session as completed (best-effort)
+        if sync_session:
+            try:
+                final_stats = {
+                    'emails_synced': emails_synced,
+                    'emails_processed': emails_processed,
+                    'emails_skipped': emails_skipped,
+                    'batches_processed': batches_processed,
+                    'error_count': error_count,
+                }
+                SyncSessionService.complete_sync_session(sync_session.id, final_stats)
+            except Exception as e:
+                logger.warning(f"Failed to complete date-range sync session {sync_session.id}: {e}")
             
         logger.info(f"Date-based sync completed: {emails_synced} emails synced from {start_date}")
         return emails_synced
@@ -529,7 +646,7 @@ class OptimizedSyncService:
                 return False  # Already synced
             
             # Fetch email details from Gmail
-            email_data = self._fetch_email_data(message_id)
+            email_data = self._fetch_email_data(message_id, user)
             if not email_data:
                 return False
             
@@ -576,9 +693,9 @@ class OptimizedSyncService:
         finally:
             db.close()
     
-    def _fetch_email_data(self, message_id: str) -> Optional[Dict[str, Any]]:
+    def _fetch_email_data(self, message_id: str, user: Optional[User] = None) -> Optional[Dict[str, Any]]:
         """
-        Fetch email data from Gmail API with retry logic
+        Fetch email data from Gmail API with retry logic and 401 re-auth
         """
         max_retries = 3
         for attempt in range(max_retries):
@@ -588,9 +705,25 @@ class OptimizedSyncService:
                     id=message_id,
                     format='full'
                 ).execute()
-                
+
                 return self._parse_email_message(message)
-                
+
+            except HttpError as e:
+                if e.resp.status == 401 and user is not None:
+                    logger.warning(f"401 Unauthorized for message {message_id}, refreshing token...")
+                    if self.gmail_service.authenticate_user(user):
+                        logger.info("Token refreshed successfully, retrying API call")
+                        continue
+                    else:
+                        logger.error("Token refresh failed, cannot continue")
+                        return None
+                if attempt < max_retries - 1:
+                    logger.warning(f"Retry {attempt + 1} for message {message_id}: {e}")
+                    time.sleep(2 ** attempt)
+                    continue
+                else:
+                    logger.error(f"Failed to fetch message {message_id} after {max_retries} attempts")
+                    return None
             except Exception as e:
                 if attempt < max_retries - 1:
                     logger.warning(f"Retry {attempt + 1} for message {message_id}: {e}")
