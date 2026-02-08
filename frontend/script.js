@@ -440,13 +440,9 @@ function selectSearchEmail(emailId) {
     }
 }
 
-// Load email detail
-function loadEmailDetail(email) {
-    console.log('loadEmailDetail called with email:', email);
-    console.log('detailContent element:', detailContent);
-    
+// Render email detail HTML into a target element
+function renderEmailDetail(email, bodyContent, targetElement) {
     const date = email.date_received ? new Date(email.date_received).toLocaleString() : '';
-    
     const emailDetailHtml = `
         <div class="email-detail-subject">${email.subject || 'No subject'}</div>
         <div class="email-detail-meta">
@@ -460,7 +456,7 @@ function loadEmailDetail(email) {
             </div>
         </div>
         <div class="email-detail-body">
-            ${email.body_html ? email.body_html : (email.body_plain || 'No content available')}
+            ${bodyContent}
         </div>
         <div class="email-detail-actions">
             <button class="btn-detail-action primary" onclick="toggleReadStatus(${email.id})">
@@ -477,10 +473,35 @@ function loadEmailDetail(email) {
             </button>
         </div>
     `;
-    
+    targetElement.innerHTML = emailDetailHtml;
+}
+
+// Fetch full email content from API then render
+function fetchAndRenderEmailDetail(email, targetElement) {
+    // Show loading state immediately with preview text
+    renderEmailDetail(email, '<div class="loading">Loading full content...</div>', targetElement);
+
+    fetch(`http://localhost:3002/api/db/email/${email.id}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.email) {
+                const body = data.email.content || email.body_preview || 'No content available';
+                renderEmailDetail(email, body, targetElement);
+            } else {
+                renderEmailDetail(email, email.body_preview || 'No content available', targetElement);
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching email content:', error);
+            renderEmailDetail(email, email.body_preview || 'Failed to load content', targetElement);
+        });
+}
+
+// Load email detail
+function loadEmailDetail(email) {
+    console.log('loadEmailDetail called with email:', email);
     if (detailContent) {
-        detailContent.innerHTML = emailDetailHtml;
-        console.log('Email detail content loaded successfully');
+        fetchAndRenderEmailDetail(email, detailContent);
     } else {
         console.error('detailContent element not found');
     }
@@ -500,46 +521,10 @@ function closeEmailDetail() {
 }
 
 // Load search email detail
-function loadSearchEmailDetail(email, detailContent) {
+function loadSearchEmailDetail(email, targetElement) {
     console.log('Loading search email detail for:', email);
-    console.log('Detail content element:', detailContent);
-    
-    const date = email.date_received ? new Date(email.date_received).toLocaleString() : '';
-    
-    const emailDetailHtml = `
-        <div class="email-detail-subject">${email.subject || 'No subject'}</div>
-        <div class="email-detail-meta">
-            <div class="email-detail-meta-item">
-                <i class="fas fa-user"></i>
-                <span>${email.sender || 'Unknown'}</span>
-            </div>
-            <div class="email-detail-meta-item">
-                <i class="fas fa-calendar"></i>
-                <span>${date}</span>
-            </div>
-        </div>
-        <div class="email-detail-body">
-            ${email.body_html ? email.body_html : (email.body_plain || 'No content available')}
-        </div>
-        <div class="email-detail-actions">
-            <button class="btn-detail-action primary" onclick="toggleReadStatus(${email.id})">
-                <i class="fas fa-${email.is_read ? 'eye-slash' : 'eye'}"></i>
-                ${email.is_read ? 'Mark Unread' : 'Mark Read'}
-            </button>
-            <button class="btn-detail-action secondary" onclick="toggleStar(${email.id})">
-                <i class="fas fa-${email.is_starred ? 'star' : 'star'}"></i>
-                ${email.is_starred ? 'Unstar' : 'Star'}
-            </button>
-            <button class="btn-detail-action danger" onclick="deleteEmail(${email.id})">
-                <i class="fas fa-trash"></i>
-                Delete
-            </button>
-        </div>
-    `;
-    
-    if (detailContent) {
-        detailContent.innerHTML = emailDetailHtml;
-        console.log('Email detail content loaded successfully');
+    if (targetElement) {
+        fetchAndRenderEmailDetail(email, targetElement);
     } else {
         console.error('Detail content element is null or undefined');
     }
@@ -1269,7 +1254,7 @@ function performSearch(page = 1) {
     
     // Use Node.js search endpoint only to avoid hanging backend calls
     const searchEndpoints = [
-        `http://localhost:3002/api/db/search?q=${encodeURIComponent(searchTerm)}&page=${page}&page_size=${searchPageSize}`  // Node.js direct server
+        `http://localhost:3002/api/db/search?q=${encodeURIComponent(searchTerm)}&page=${page}&page_size=${searchPageSize}&filter=${encodeURIComponent(searchFilter)}&date_from=${encodeURIComponent(dateFrom)}&date_to=${encodeURIComponent(dateTo)}`  // Node.js direct server
     ];
     
     let searchPromise = null;
@@ -1381,7 +1366,7 @@ function showSearchResults(results) {
                 <span class="email-date">${new Date(email.date_received).toLocaleDateString()}</span>
             </div>
             <div class="email-subject">${email.subject}</div>
-            <div class="email-preview">${(email.body_plain || '').substring(0, 100)}...</div>
+            <div class="email-preview">${(email.body_preview || email.body_plain || '').substring(0, 100)}...</div>
         </div>
     `).join('');
     
