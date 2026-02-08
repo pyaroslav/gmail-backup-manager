@@ -762,6 +762,24 @@
                     </div>
                     
                     <div class="settings-section">
+                        <h3>Gmail Authentication</h3>
+                        <div class="setting-item" id="gmailAuthStatus">
+                            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                                <span id="authStatusDot" style="width:12px;height:12px;border-radius:50%;background:#9ca3af;display:inline-block;"></span>
+                                <span id="authStatusText" style="color:#6b7280;">Checking authentication status...</span>
+                            </div>
+                            <div id="authStatusDetails" style="font-size:0.9em;color:#6b7280;margin-bottom:12px;display:none;">
+                                <div>Email: <strong id="authEmail">—</strong></div>
+                                <div>Token expires: <strong id="authTokenExpiry">—</strong></div>
+                            </div>
+                            <button class="btn btn-primary" id="gmailReauthBtn">
+                                <i class="fas fa-sign-in-alt"></i>
+                                Re-authenticate with Gmail
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
                         <h3>Actions</h3>
                         <div class="setting-actions">
                             <button class="btn btn-primary" id="saveSettings">

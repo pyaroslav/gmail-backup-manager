@@ -13,6 +13,7 @@ from .email_ops import router as _email_ops_router
 from .db_direct import router as _db_direct_router
 from .test_analytics import router as _test_analytics_router
 from .search_ops import router as _search_ops_router
+from .oauth import router as oauth_router
 
 test_router = APIRouter()
 test_router.include_router(_sync_control_router)
@@ -29,4 +30,5 @@ __all__ = [
     "analytics_router",
     "labels_router",
     "test_router",
+    "oauth_router",
 ]

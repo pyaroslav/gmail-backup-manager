@@ -91,7 +91,7 @@ app.add_middleware(
 Base.metadata.create_all(bind=engine)
 
 # Include routers (API-key protected; /health is exempt below)
-from app.api import emails_router, search_router, sync_router, analytics_router, labels_router, test_router
+from app.api import emails_router, search_router, sync_router, analytics_router, labels_router, test_router, oauth_router
 from app.services.auth_service import verify_api_key
 
 _auth = [Depends(verify_api_key)]
@@ -102,6 +102,9 @@ app.include_router(sync_router, prefix="/api/v1/sync", tags=["sync"], dependenci
 app.include_router(analytics_router, prefix="/api/v1/analytics", tags=["analytics"], dependencies=_auth)
 app.include_router(labels_router, prefix="/api/v1/labels", tags=["labels"], dependencies=_auth)
 app.include_router(test_router, prefix="/api/v1/test", tags=["test"], dependencies=_auth)
+
+# OAuth router — no API key auth (Google's redirect can't send custom headers)
+app.include_router(oauth_router, prefix="/api/v1/auth/google", tags=["oauth"])
 
 
 # Root endpoint
