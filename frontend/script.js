@@ -2203,7 +2203,7 @@ function fetchSyncStatus() {
                 // Update progress from backend data
                 const progress = data.progress || {};
                 
-                window.currentSync.emailsSynced = progress.emails_synced || window.currentSync.emailsSynced;
+                window.currentSync.emailsSynced = progress.emails_processed || progress.emails_synced || window.currentSync.emailsSynced;
                 window.currentSync.errorCount = progress.errors || window.currentSync.errorCount;
                 window.currentSync.batchCount = progress.current_batch || window.currentSync.batchCount;
                 

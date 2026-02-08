@@ -860,16 +860,19 @@ app.get('/api/db/sync-monitoring', async (req, res) => {
                     // Check if sync session is stale (running for more than 2 hours without progress)
                     const isStale = elapsedHours > 2;
                     
-                    // Use the actual sync session data instead of calculating from total emails
+                    // emails_synced = newly inserted emails; emails_processed = total checked
                     const actualEmailsSynced = session.emails_synced || 0;
-                    
+                    const emailsProcessed = session.emails_processed || 0;
+                    // Use emails_processed for progress (it counts all checked emails, not just new)
+                    const progressCount = emailsProcessed > 0 ? emailsProcessed : actualEmailsSynced;
+
                     if (isStale) {
                         // Mark stale session as inactive
                         syncProgress = {
                             is_active: false,
                             start_time: session.started_at,
                             elapsed_time: formatElapsedTime(elapsedMs),
-                            emails_processed: actualEmailsSynced,
+                            emails_processed: progressCount,
                             emails_per_minute: 0,
                             progress_percentage: 100,
                             estimated_completion: null,
@@ -892,9 +895,9 @@ app.get('/api/db/sync-monitoring', async (req, res) => {
                             is_active: true,
                             start_time: session.started_at,
                             elapsed_time: formatElapsedTime(elapsedMs),
-                            emails_processed: actualEmailsSynced,
-                            emails_per_minute: elapsedMinutes > 0 ? Math.round(actualEmailsSynced / elapsedMinutes) : 0,
-                            progress_percentage: session.max_emails ? Math.min((actualEmailsSynced / session.max_emails) * 100, 95) : 0,
+                            emails_processed: progressCount,
+                            emails_per_minute: elapsedMinutes > 0 ? Math.round(progressCount / elapsedMinutes) : 0,
+                            progress_percentage: session.max_emails ? Math.min((progressCount / session.max_emails) * 100, 95) : 0,
                             estimated_completion: null,
                             current_batch: session.batches_processed || 1,
                             total_batches: session.batches_processed || 1,
