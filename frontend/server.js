@@ -2004,6 +2004,41 @@ app.get('/api/health', (req, res) => {
     });
 });
 
+// Proxy /api/v1/auth/google/* to backend — NO API key (Google redirect can't send headers)
+app.all('/api/v1/auth/google/*', async (req, res) => {
+    try {
+        const backendUrl = `http://gmail-backup-backend:8000${req.originalUrl}`;
+        const fetchOpts = {
+            method: req.method,
+            headers: {'Content-Type': 'application/json'},
+            signal: AbortSignal.timeout(30000),
+        };
+        if (['POST', 'PUT', 'PATCH'].includes(req.method) && req.body && Object.keys(req.body).length > 0) {
+            fetchOpts.body = JSON.stringify(req.body);
+        }
+        const backendRes = await fetch(backendUrl, fetchOpts);
+        const contentType = backendRes.headers.get('content-type') || '';
+        if (contentType.includes('text/html')) {
+            // Pass through HTML responses (callback success/error pages)
+            const html = await backendRes.text();
+            res.status(backendRes.status).set('Content-Type', 'text/html').send(html);
+        } else if (contentType.includes('application/json')) {
+            const data = await backendRes.json();
+            res.status(backendRes.status).json(data);
+        } else {
+            const text = await backendRes.text();
+            res.status(backendRes.status >= 400 ? backendRes.status : 502).json({
+                error: 'Backend returned unexpected response',
+                status: backendRes.status,
+                detail: text.substring(0, 500)
+            });
+        }
+    } catch (error) {
+        console.error(`Backend proxy error for ${req.originalUrl}:`, error.message);
+        res.status(502).json({ error: 'Backend unavailable', detail: error.message });
+    }
+});
+
 // Proxy /api/v1/test/* to backend (used by script.js instead of direct localhost:8000)
 app.all('/api/v1/test/*', async (req, res) => {
     try {

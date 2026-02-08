@@ -2904,12 +2904,88 @@ function exportAnalyticsData() {
 function loadSettings() {
     // Load current settings
     loadCurrentSettings();
-    
+
+    // Load Gmail auth status
+    loadAuthStatus();
+
     // Add event listeners
     document.getElementById('saveSettings').addEventListener('click', saveSettings);
     document.getElementById('resetSettings').addEventListener('click', resetSettings);
     document.getElementById('clearData').addEventListener('click', clearData);
     document.getElementById('darkMode').addEventListener('change', toggleDarkMode);
+    document.getElementById('gmailReauthBtn').addEventListener('click', startGmailReauth);
+
+    // Listen for auth-success postMessage from the OAuth popup
+    window.addEventListener('message', function(event) {
+        if (event.data === 'gmail-auth-success') {
+            loadAuthStatus();
+        }
+    });
+}
+
+async function loadAuthStatus() {
+    const dot = document.getElementById('authStatusDot');
+    const text = document.getElementById('authStatusText');
+    const details = document.getElementById('authStatusDetails');
+    const emailEl = document.getElementById('authEmail');
+    const expiryEl = document.getElementById('authTokenExpiry');
+
+    try {
+        const res = await fetch('/api/v1/auth/google/status');
+        if (!res.ok) throw new Error('Failed to fetch auth status');
+        const data = await res.json();
+
+        if (data.authenticated) {
+            dot.style.background = '#22c55e';
+            text.textContent = 'Authenticated';
+            text.style.color = '#16a34a';
+        } else if (data.email && data.token_expired) {
+            dot.style.background = '#ef4444';
+            text.textContent = 'Token expired';
+            text.style.color = '#dc2626';
+        } else {
+            dot.style.background = '#ef4444';
+            text.textContent = 'Not authenticated';
+            text.style.color = '#dc2626';
+        }
+
+        if (data.email) {
+            emailEl.textContent = data.email;
+            expiryEl.textContent = data.token_expiry
+                ? new Date(data.token_expiry).toLocaleString()
+                : '—';
+            details.style.display = 'block';
+        } else {
+            details.style.display = 'none';
+        }
+    } catch (err) {
+        console.error('Error loading auth status:', err);
+        dot.style.background = '#9ca3af';
+        text.textContent = 'Unable to check auth status';
+        text.style.color = '#6b7280';
+        details.style.display = 'none';
+    }
+}
+
+async function startGmailReauth() {
+    try {
+        const res = await fetch('/api/v1/auth/google/url');
+        if (!res.ok) throw new Error('Failed to get auth URL');
+        const data = await res.json();
+
+        // Open the Google consent page in a popup
+        const w = 500, h = 600;
+        const left = (screen.width - w) / 2;
+        const top = (screen.height - h) / 2;
+        window.open(
+            data.url,
+            'gmailAuth',
+            `width=${w},height=${h},left=${left},top=${top}`
+        );
+    } catch (err) {
+        console.error('Error starting Gmail re-auth:', err);
+        alert('Failed to start Gmail re-authentication: ' + err.message);
+    }
 }
 
 function loadCurrentSettings() {
