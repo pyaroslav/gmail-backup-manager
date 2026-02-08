@@ -275,7 +275,6 @@ async def start_quick_sync(
     try:
         import asyncio
         import anyio
-        from ..services.sync_session_service import SyncSessionService
 
         # Get the first user from database
         user = db.query(User).first()
@@ -288,33 +287,22 @@ async def start_quick_sync(
         from ..services.sync_service import OptimizedSyncService
         sync_service = OptimizedSyncService()
 
-        # Create a sync session up-front so UI can track it immediately
-        sync_session = SyncSessionService.create_sync_session(
-            user=user,
-            sync_type="quick",
-            sync_source="api",
-            max_emails=max_emails,
-            notes="Quick sync (background)",
-            db=db,
-        )
+        user_id = user.id
 
         def _run_quick_sync_background():
             """Run sync in a worker thread so the HTTP request returns immediately."""
             with SessionLocal() as bg_db:
-                bg_user = bg_db.query(User).filter(User.id == user.id).first()
+                bg_user = bg_db.query(User).filter(User.id == user_id).first()
                 if not bg_user:
                     return
-                sync_service.sync_user_emails_full(
-                    bg_user, max_emails, existing_session_id=sync_session.id
-                )
+                sync_service.sync_user_emails_full(bg_user, max_emails)
 
-        # Fire-and-forget background sync
+        # Fire-and-forget background sync (creates its own session internally)
         asyncio.create_task(anyio.to_thread.run_sync(_run_quick_sync_background))
 
         return {
             "message": "Quick sync started",
             "user_id": user.id,
-            "session_id": sync_session.id,
             "result": {
                 "max_emails": max_emails,
                 "sync_type": "quick"
@@ -338,7 +326,6 @@ async def start_full_sync(
     try:
         import asyncio
         import anyio
-        from ..services.sync_session_service import SyncSessionService
 
         # Get the first user from database
         user = db.query(User).first()
@@ -351,33 +338,22 @@ async def start_full_sync(
         from ..services.sync_service import OptimizedSyncService
         sync_service = OptimizedSyncService()
 
-        # Create a sync session up-front so UI can track it immediately
-        sync_session = SyncSessionService.create_sync_session(
-            user=user,
-            sync_type="full",
-            sync_source="api",
-            max_emails=max_emails,
-            notes="Full sync (background)",
-            db=db,
-        )
+        user_id = user.id
 
         def _run_full_sync_background():
             """Run sync in a worker thread so the HTTP request returns immediately."""
             with SessionLocal() as bg_db:
-                bg_user = bg_db.query(User).filter(User.id == user.id).first()
+                bg_user = bg_db.query(User).filter(User.id == user_id).first()
                 if not bg_user:
                     return
-                sync_service.sync_user_emails_full(
-                    bg_user, max_emails, existing_session_id=sync_session.id
-                )
+                sync_service.sync_user_emails_full(bg_user, max_emails)
 
-        # Fire-and-forget background sync
+        # Fire-and-forget background sync (creates its own session internally)
         asyncio.create_task(anyio.to_thread.run_sync(_run_full_sync_background))
 
         return {
             "message": "Full sync started",
             "user_id": user.id,
-            "session_id": sync_session.id,
             "result": {
                 "max_emails": max_emails,
                 "sync_type": "full"

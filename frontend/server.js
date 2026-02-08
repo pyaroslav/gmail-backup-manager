@@ -79,12 +79,17 @@ async function connectDB(retries = 5) {
 }
 
 // Email count endpoint
-// Fast approximate row count using PostgreSQL statistics (avoids full table scan)
+// Fast approximate row count using PostgreSQL statistics (avoids full table scan).
+// Falls back to exact COUNT(*) if pg_class reports 0 (e.g. before first ANALYZE).
 async function fastEmailCount() {
     const result = await pool.query(
         "SELECT reltuples::bigint AS count FROM pg_class WHERE relname = 'emails'"
     );
-    return parseInt(result.rows[0].count) || 0;
+    const estimate = parseInt(result.rows[0].count) || 0;
+    if (estimate > 0) return estimate;
+    // pg_class has no stats yet — fall back to exact count
+    const exact = await pool.query('SELECT COUNT(*) AS count FROM emails');
+    return parseInt(exact.rows[0].count) || 0;
 }
 
 app.get('/api/db/email-count', async (req, res) => {
@@ -2009,8 +2014,20 @@ app.all('/api/v1/test/*', async (req, res) => {
             fetchOpts.body = JSON.stringify(req.body);
         }
         const backendRes = await fetch(backendUrl, fetchOpts);
-        const data = await backendRes.json();
-        res.status(backendRes.status).json(data);
+        const contentType = backendRes.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+            const data = await backendRes.json();
+            res.status(backendRes.status).json(data);
+        } else {
+            // Backend returned non-JSON (e.g. HTML error page) — wrap it
+            const text = await backendRes.text();
+            console.error(`Backend returned non-JSON for ${req.originalUrl}: ${backendRes.status} ${text.substring(0, 200)}`);
+            res.status(backendRes.status >= 400 ? backendRes.status : 502).json({
+                error: 'Backend returned non-JSON response',
+                status: backendRes.status,
+                detail: text.substring(0, 500)
+            });
+        }
     } catch (error) {
         console.error(`Backend proxy error for ${req.originalUrl}:`, error.message);
         res.status(502).json({ error: 'Backend unavailable', detail: error.message });
