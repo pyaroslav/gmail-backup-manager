@@ -207,9 +207,8 @@ app.get('/api/db/emails', async (req, res) => {
         const pageSize = parseInt(req.query.page_size) || 25;
         const offset = (page - 1) * pageSize;
         
-        // Get total count
-        const countResult = await pool.query('SELECT COUNT(*) FROM emails');
-        const totalCount = parseInt(countResult.rows[0].count);
+        // Get total count (fast estimate)
+        const totalCount = await fastEmailCount();
         
         // Keep list payload small: do NOT return full body_html/body_plain here.
         const emailsResult = await pool.query(`
@@ -763,9 +762,8 @@ app.get('/api/db/sync-monitoring', async (req, res) => {
     try {
         const currentTime = Date.now();
         
-        // Get basic database stats
-        const totalEmailsResult = await pool.query('SELECT COUNT(*) as count FROM emails');
-        const totalEmails = parseInt(totalEmailsResult.rows[0].count);
+        // Get basic database stats (fast estimate)
+        const totalEmails = await fastEmailCount();
         
         const sizeResult = await pool.query(`
             SELECT pg_size_pretty(pg_database_size(current_database())) as size,
