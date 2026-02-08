@@ -3,7 +3,7 @@ import logging
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional
-from sqlalchemy import func
+from sqlalchemy import func, text
 
 from ..models.database import SessionLocal
 from ..models.user import User
@@ -44,20 +44,22 @@ class BackgroundSyncService:
         self.sync_stats["start_time"] = datetime.now(timezone.utc)
         
         logger.info(f"Starting background sync service (interval: {sync_interval_minutes} minutes)")
-        
-        try:
-            while self.is_running:
-                # Check if a sync is already in progress
+
+        while self.is_running:
+            try:
                 if not self.sync_in_progress:
                     await self._perform_sync_cycle()
                 else:
                     logger.info("Previous sync still in progress, skipping this cycle")
-                
-                await asyncio.sleep(self.sync_interval)
-        except Exception as e:
-            logger.error(f"Background sync service error: {e}")
-            self.is_running = False
-            raise
+            except asyncio.CancelledError:
+                logger.info("Background sync service cancelled")
+                self.is_running = False
+                raise
+            except Exception as e:
+                logger.error(f"Background sync service error (will retry next cycle): {e}")
+                await asyncio.sleep(30)
+                continue
+            await asyncio.sleep(self.sync_interval)
     
     def stop_background_sync(self):
         """
@@ -74,14 +76,15 @@ class BackgroundSyncService:
         if self.sync_in_progress:
             logger.warning("Sync already in progress, skipping this cycle")
             return
-        
+
         # Set sync lock
         self.sync_in_progress = True
         self.sync_stats["sync_in_progress"] = True
-        
+
         start_time = time.time()
         logger.info("Starting sync cycle...")
-        
+
+        db = None
         try:
             # Get users that need syncing
             db = SessionLocal()
@@ -91,80 +94,71 @@ class BackgroundSyncService:
                 logger.error(f"Database error fetching users: {db_error}")
                 db.rollback()
                 return
-            
+
             if not users:
                 logger.info("No users found for syncing")
                 return
-            
+
             for user in users:
                 try:
                     # Check if user needs syncing (last sync > 10 minutes ago or never synced)
                     current_time = datetime.now(timezone.utc)
                     time_since_last_sync = current_time - user.last_sync if user.last_sync else timedelta(hours=999)
                     needs_sync = (
-                        user.last_sync is None or 
+                        user.last_sync is None or
                         time_since_last_sync > timedelta(minutes=10)
                     )
-                    
-                    logger.info(f"User {user.email}: last_sync={user.last_sync}, current_time={current_time}, time_since_last_sync={time_since_last_sync}, needs_sync={needs_sync}")
-                    
+
+                    logger.info(f"User {user.email}: last_sync={user.last_sync}, needs_sync={needs_sync}")
+
                     if needs_sync:
                         logger.info(f"Syncing user: {user.email}")
-                        
-                        # Use the API endpoint to trigger sync with timeout
-                        import aiohttp
-                        timeout = aiohttp.ClientTimeout(total=1800)  # 30 minutes timeout
-                        async with aiohttp.ClientSession(timeout=timeout) as session:
-                            async with session.post(
-                                f"http://localhost:8000/api/v1/test/sync/start",
-                                json={"max_emails": 1000}
-                            ) as response:
-                                result = await response.json()
-                                
-                                if result.get("status") == "completed":
-                                    self.sync_stats["total_syncs"] += 1
-                                    emails_synced = result.get("result", {}).get("emails_synced", 0)
-                                    self.sync_stats["total_emails_synced"] += emails_synced
-                                    logger.info(f"Sync completed for {user.email}: {emails_synced} emails")
-                                    
-                                    # Update user's last_sync time to prevent immediate re-sync
-                                    try:
-                                        user.last_sync = datetime.now(timezone.utc)
-                                        db.commit()
-                                        logger.info(f"Updated last_sync for {user.email} to {user.last_sync}")
-                                    except Exception as db_error:
-                                        logger.error(f"Database error updating last_sync for {user.email}: {db_error}")
-                                        db.rollback()
-                                        # Try to refresh the session
-                                        try:
-                                            db.refresh(user)
-                                        except:
-                                            pass
-                                else:
-                                    self.sync_stats["errors"] += 1
-                                    logger.error(f"Sync failed for {user.email}: {result.get('error', 'Unknown error')}")
+
+                        # Call sync service directly instead of HTTP self-call
+                        from .sync_service import OptimizedSyncService
+                        sync_service = OptimizedSyncService()
+                        try:
+                            emails_synced = await asyncio.to_thread(
+                                sync_service.sync_user_emails, user, 1000
+                            )
+                            self.sync_stats["total_syncs"] += 1
+                            self.sync_stats["total_emails_synced"] += emails_synced
+                            logger.info(f"Sync completed for {user.email}: {emails_synced} emails")
+
+                            # Update user's last_sync time
+                            try:
+                                user.last_sync = datetime.now(timezone.utc)
+                                db.commit()
+                                logger.info(f"Updated last_sync for {user.email} to {user.last_sync}")
+                            except Exception as db_error:
+                                logger.error(f"Database error updating last_sync for {user.email}: {db_error}")
+                                db.rollback()
+                        except Exception as sync_error:
+                            self.sync_stats["errors"] += 1
+                            logger.error(f"Sync failed for {user.email}: {sync_error}")
                     else:
                         logger.info(f"User {user.email} doesn't need syncing (last sync: {user.last_sync})")
-                        
-                except asyncio.TimeoutError:
-                    self.sync_stats["errors"] += 1
-                    logger.error(f"Sync timeout for user {user.email}")
-                    continue
+
                 except Exception as e:
                     self.sync_stats["errors"] += 1
                     logger.error(f"Error syncing user {user.email}: {e}")
-                    logger.error(f"Error type: {type(e).__name__}")
-                    logger.error(f"Error details: {str(e)}")
                     continue
-            
+
             # Update sync stats
             sync_duration = time.time() - start_time
             self.sync_stats["last_sync_duration"] = sync_duration
             self.sync_stats["last_sync_time"] = datetime.now(timezone.utc)
             self.last_sync_time = datetime.now(timezone.utc)
-            
+
             logger.info(f"Sync cycle completed in {sync_duration:.2f}s")
-            
+
+            # Refresh pg_class statistics so the frontend fast-count stays accurate
+            try:
+                db.execute(text("ANALYZE emails"))
+                db.commit()
+            except Exception as analyze_err:
+                logger.warning(f"ANALYZE emails failed: {analyze_err}")
+
         except Exception as e:
             self.sync_stats["errors"] += 1
             logger.error(f"Error in sync cycle: {e}")
@@ -172,7 +166,8 @@ class BackgroundSyncService:
             # Release sync lock
             self.sync_in_progress = False
             self.sync_stats["sync_in_progress"] = False
-            db.close()
+            if db:
+                db.close()
     
     def get_sync_status(self) -> Dict[str, Any]:
         """

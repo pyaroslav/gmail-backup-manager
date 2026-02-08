@@ -21,9 +21,11 @@ import threading
 
 logger = logging.getLogger(__name__)
 
-# Gmail API scopes - use readonly for now since that's what was granted
+# Gmail API scopes
 SCOPES = [
-    'https://www.googleapis.com/auth/gmail.readonly'
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.modify',
+    'https://www.googleapis.com/auth/gmail.labels'
 ]
 
 class GmailService:
@@ -35,28 +37,68 @@ class GmailService:
     def authenticate_user(self, user: User) -> bool:
         """Authenticate user with Gmail API using stored tokens"""
         try:
+            from google.auth.exceptions import RefreshError
+            
+            # Google's Credentials internally compares expiry against a
+            # naive UTC datetime, so strip tzinfo to avoid
+            # "can't compare offset-naive and offset-aware datetimes".
+            token_expiry = user.gmail_token_expiry
+            if token_expiry is not None and token_expiry.tzinfo is not None:
+                token_expiry = token_expiry.replace(tzinfo=None)
+
             creds = Credentials(
                 token=user.gmail_access_token,
                 refresh_token=user.gmail_refresh_token,
                 token_uri="https://oauth2.googleapis.com/token",
                 client_id=os.getenv("GMAIL_CLIENT_ID"),
                 client_secret=os.getenv("GMAIL_CLIENT_SECRET"),
-                scopes=SCOPES
+                scopes=SCOPES,
+                expiry=token_expiry
             )
             
             # Refresh token if expired
             if creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-                # Update user tokens
-                user.gmail_access_token = creds.token
-                user.gmail_refresh_token = creds.refresh_token
-                user.gmail_token_expiry = creds.expiry
+                try:
+                    logger.info(f"Token expired for {user.email}, attempting refresh...")
+                    creds.refresh(Request())
+                    
+                    # Update user tokens in database
+                    user.gmail_access_token = creds.token
+                    if creds.refresh_token:  # Refresh token might not change
+                        user.gmail_refresh_token = creds.refresh_token
+                    user.gmail_token_expiry = creds.expiry
+                    
+                    # Save to database immediately using a new session
+                    from ..models.database import SessionLocal
+                    db = SessionLocal()
+                    try:
+                        db_user = db.query(User).filter(User.id == user.id).first()
+                        if db_user:
+                            db_user.gmail_access_token = creds.token
+                            if creds.refresh_token:
+                                db_user.gmail_refresh_token = creds.refresh_token
+                            db_user.gmail_token_expiry = creds.expiry
+                            db.commit()
+                            logger.info(f"✅ Token refreshed and saved to database for {user.email}")
+                            logger.info(f"   New expiry: {creds.expiry}")
+                    finally:
+                        db.close()
+                        
+                except RefreshError as refresh_error:
+                    logger.error(f"❌ Token refresh failed for {user.email}: {refresh_error}")
+                    logger.error(f"⚠️ MANUAL RE-AUTHENTICATION REQUIRED!")
+                    logger.error(f"   Run: cd backend && python gmail_auth.py")
+                    return False
                 
             self.service = build('gmail', 'v1', credentials=creds)
             return True
             
         except Exception as e:
-            logger.error(f"Authentication failed: {e}")
+            logger.error(f"Authentication failed for {user.email}: {e}")
+            if "invalid_grant" in str(e).lower() or "revoked" in str(e).lower():
+                logger.error(f"⚠️ Token has been revoked or expired!")
+                logger.error(f"⚠️ MANUAL RE-AUTHENTICATION REQUIRED!")
+                logger.error(f"   Run: cd backend && python gmail_auth.py")
             return False
     
     def get_all_labels(self, user: User) -> List[Dict[str, Any]]:

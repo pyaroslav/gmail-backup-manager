@@ -39,32 +39,44 @@ const dbConfig = {
     user: process.env.DB_USER || 'gmail_user',
     password: process.env.DB_PASSWORD || 'gmail_password',
     connectionTimeoutMillis: 5000,
-    query_timeout: 5000
+    statement_timeout: 60000,
+    query_timeout: 60000,
+    max: 10
 };
 
-// Create database client and pool
-const client = new Client(dbConfig);
+// Use pool for all queries — it handles connection recovery automatically.
+// The single Client would permanently break after a timeout.
 const pool = new Pool(dbConfig);
+// Keep client as an alias so existing code continues to work.
+const client = pool;
 
-// Connect to database
+// Connect to database (pool connects lazily, just verify connectivity)
 async function connectDB() {
     try {
-        await client.connect();
-        console.log('Connected to PostgreSQL database');
+        const res = await pool.query('SELECT 1');
+        console.log('Connected to PostgreSQL database via pool');
     } catch (error) {
         console.error('Database connection failed:', error);
     }
 }
 
 // Email count endpoint
+// Fast approximate row count using PostgreSQL statistics (avoids full table scan)
+async function fastEmailCount() {
+    const result = await pool.query(
+        "SELECT reltuples::bigint AS count FROM pg_class WHERE relname = 'emails'"
+    );
+    return parseInt(result.rows[0].count) || 0;
+}
+
 app.get('/api/db/email-count', async (req, res) => {
     try {
-        const result = await client.query('SELECT COUNT(*) FROM emails');
+        const totalEmails = await fastEmailCount();
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         res.setHeader('Pragma', 'no-cache');
         res.setHeader('Expires', '0');
         res.json({
-            total_emails: parseInt(result.rows[0].count),
+            total_emails: totalEmails,
             timestamp: new Date().toISOString(),
             method: 'direct_nodejs'
         });
@@ -81,9 +93,8 @@ app.get('/api/db/email-count', async (req, res) => {
 // Dashboard data endpoint - comprehensive data for dashboard display
 app.get('/api/db/dashboard', async (req, res) => {
     try {
-        // Get total email count
-        const countResult = await client.query('SELECT COUNT(*) FROM emails');
-        const totalEmails = parseInt(countResult.rows[0].count);
+        // Get total email count (fast estimate)
+        const totalEmails = await fastEmailCount();
         
         // Get database size
         const sizeResult = await client.query(`
@@ -97,9 +108,16 @@ app.get('/api/db/dashboard', async (req, res) => {
         const latestEmailResult = await client.query('SELECT MAX(date_received) FROM emails');
         const latestEmailDate = latestEmailResult.rows[0].max;
         
-        // Get unread email count
-        const unreadResult = await client.query('SELECT COUNT(*) FROM emails WHERE is_read = false');
-        const unreadEmails = parseInt(unreadResult.rows[0].count);
+        // Get unread email count (use estimate for speed on large tables)
+        let unreadEmails = 0;
+        try {
+            const unreadResult = await pool.query(
+                'SELECT COUNT(*) FROM emails WHERE is_read = false'
+            );
+            unreadEmails = parseInt(unreadResult.rows[0].count);
+        } catch (unreadErr) {
+            console.log('Unread count slow, using 0:', unreadErr.message);
+        }
         
         // Get recent emails (last 10)
         const recentEmailsResult = await client.query(`
@@ -190,14 +208,14 @@ app.get('/api/db/emails', async (req, res) => {
         const offset = (page - 1) * pageSize;
         
         // Get total count
-        const countResult = await client.query('SELECT COUNT(*) FROM emails');
+        const countResult = await pool.query('SELECT COUNT(*) FROM emails');
         const totalCount = parseInt(countResult.rows[0].count);
         
-        // Get emails with more complete information
-        const emailsResult = await client.query(`
+        // Keep list payload small: do NOT return full body_html/body_plain here.
+        const emailsResult = await pool.query(`
             SELECT id, subject, sender, date_received, is_read, is_starred, 
-                   body_plain, body_html, thread_id, gmail_id, labels,
-                   LEFT(body_plain, 500) as body_preview
+                   thread_id, gmail_id, labels,
+                   LEFT(COALESCE(body_plain, ''), 500) as body_preview
             FROM emails 
             ORDER BY date_received DESC 
             LIMIT $1 OFFSET $2
@@ -210,8 +228,6 @@ app.get('/api/db/emails', async (req, res) => {
             date_received: row.date_received ? row.date_received.toISOString() : null,
             is_read: row.is_read,
             is_starred: row.is_starred,
-            body_plain: row.body_plain,
-            body_html: row.body_html,
             thread_id: row.thread_id,
             gmail_id: row.gmail_id,
             labels: row.labels,
@@ -245,30 +261,70 @@ app.get('/api/db/search', async (req, res) => {
         const page = parseInt(req.query.page) || 1;
         const pageSize = parseInt(req.query.page_size) || 50;
         const offset = (page - 1) * pageSize;
+        const filter = (req.query.filter || 'all').toString();
+        const dateFrom = (req.query.date_from || '').toString();
+        const dateTo = (req.query.date_to || '').toString();
         
         if (!query) {
             return res.status(400).json({ error: 'Query parameter required' });
         }
         
         const searchTerm = `%${query}%`;
+
+        // Build WHERE clause (server-side filtering is much faster than pulling everything and filtering client-side)
+        const whereParts = [];
+        const params = [];
+        let idx = 1;
+
+        if (filter === 'subject') {
+            whereParts.push(`subject ILIKE $${idx++}`);
+            params.push(searchTerm);
+        } else if (filter === 'sender') {
+            whereParts.push(`sender ILIKE $${idx++}`);
+            params.push(searchTerm);
+        } else if (filter === 'body') {
+            whereParts.push(`body_plain ILIKE $${idx++}`);
+            params.push(searchTerm);
+        } else {
+            whereParts.push(`(subject ILIKE $${idx} OR sender ILIKE $${idx} OR body_plain ILIKE $${idx})`);
+            params.push(searchTerm);
+            idx++;
+        }
+
+        if (dateFrom) {
+            whereParts.push(`date_received >= $${idx++}`);
+            params.push(dateFrom);
+        }
+        if (dateTo) {
+            // dateTo is YYYY-MM-DD; include full day
+            whereParts.push(`date_received < ($${idx++}::date + INTERVAL '1 day')`);
+            params.push(dateTo);
+        }
+
+        const whereSql = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
         
         // Get total count
-        const countResult = await client.query(`
-            SELECT COUNT(*) FROM emails 
-            WHERE subject ILIKE $1 OR sender ILIKE $1 OR body_plain ILIKE $1
-        `, [searchTerm]);
+        const countResult = await pool.query(
+            `SELECT COUNT(*) FROM emails ${whereSql}`,
+            params
+        );
         const totalCount = parseInt(countResult.rows[0].count);
         
-        // Get search results with more complete information
-        const searchResult = await client.query(`
-            SELECT id, subject, sender, date_received, is_read, is_starred, 
-                   body_plain, body_html, thread_id, gmail_id, labels,
-                   LEFT(body_plain, 500) as body_preview
-            FROM emails 
-            WHERE subject ILIKE $1 OR sender ILIKE $1 OR body_plain ILIKE $1
-            ORDER BY date_received DESC 
-            LIMIT $2 OFFSET $3
-        `, [searchTerm, pageSize, offset]);
+        // Keep search payload small: do NOT return full body_html/body_plain here.
+        // Use /api/db/email/:id when the user opens an email.
+        const searchParams = [...params, pageSize, offset];
+        const searchResult = await pool.query(
+            `
+            SELECT id, subject, sender, date_received, is_read, is_starred,
+                   thread_id, gmail_id, labels,
+                   LEFT(COALESCE(body_plain, ''), 500) as body_preview
+            FROM emails
+            ${whereSql}
+            ORDER BY date_received DESC
+            LIMIT $${idx} OFFSET $${idx + 1}
+            `,
+            searchParams
+        );
         
         const emails = searchResult.rows.map(row => ({
             id: row.id,
@@ -277,8 +333,6 @@ app.get('/api/db/search', async (req, res) => {
             date_received: row.date_received ? row.date_received.toISOString() : null,
             is_read: row.is_read,
             is_starred: row.is_starred,
-            body_plain: row.body_plain,
-            body_html: row.body_html,
             thread_id: row.thread_id,
             gmail_id: row.gmail_id,
             labels: row.labels,
@@ -396,9 +450,8 @@ let syncDetected = false; // Track if sync has been detected
 // Sync status endpoint
 app.get('/api/db/sync-status', async (req, res) => {
     try {
-        // Get basic database stats
-        const countResult = await client.query('SELECT COUNT(*) FROM emails');
-        const totalEmails = parseInt(countResult.rows[0].count);
+        // Get basic database stats (fast estimate)
+        const totalEmails = await fastEmailCount();
         const currentTime = Date.now();
         
         // Track email count changes
@@ -1424,7 +1477,7 @@ app.post('/api/sync/resume', async (req, res) => {
         }
         
         // Get current email count to show progress
-        const emailCountResult = await client.query('SELECT COUNT(*) as total_emails FROM emails');
+        const emailCountResult = { rows: [{ total_emails: await fastEmailCount() }] };
         const currentEmailCount = parseInt(emailCountResult.rows[0].total_emails);
         
         console.log('Resume configuration:', resumeConfig);
@@ -1494,7 +1547,7 @@ app.get('/api/sync/resume-info', async (req, res) => {
         `);
         
         // Get current email count
-        const emailCountResult = await client.query('SELECT COUNT(*) as total_emails FROM emails');
+        const emailCountResult = { rows: [{ total_emails: await fastEmailCount() }] };
         const currentEmailCount = parseInt(emailCountResult.rows[0].total_emails);
         
         // Get latest email date

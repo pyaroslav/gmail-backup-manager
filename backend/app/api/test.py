@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List
-from ..models.database import get_db, SessionLocal, FrontendSessionLocal
+from ..models.database import get_db, get_frontend_db, SessionLocal, FrontendSessionLocal
 from ..models.user import User
 from ..models.email import Email, EmailLabel, EmailAttachment
 from ..services.auth_service import get_test_user
@@ -16,8 +16,6 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from sqlalchemy import text
 from pathlib import Path
-import psycopg2
-from psycopg2.extras import RealDictCursor
 import psutil
 
 logger = logging.getLogger(__name__)
@@ -403,9 +401,11 @@ async def delete_test_email(email_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/sync/status")
-async def get_test_sync_status(db: Session = Depends(get_db)):
+async def get_test_sync_status(db: Session = Depends(get_frontend_db)):
     """Get sync status for testing (no auth required)"""
     try:
+        from ..services.sync_session_service import SyncSessionService
+
         # Get the first user from database
         user = db.query(User).first()
         if not user:
@@ -417,16 +417,73 @@ async def get_test_sync_status(db: Session = Depends(get_db)):
         # Get basic sync statistics
         total_emails = db.query(Email).count()
         last_sync = user.last_sync.isoformat() if user.last_sync else None
-        
-        return {
+
+        # Determine real-time sync status from sync_sessions
+        active_session = SyncSessionService.get_active_sync_session(user=user, db=db)
+        # Guard against "stuck started" sessions (e.g., client timed out before work began).
+        if active_session and active_session.last_activity_at:
+            from datetime import datetime, timezone, timedelta
+            if datetime.now(timezone.utc) - active_session.last_activity_at > timedelta(minutes=2):
+                # Treat as stale; UI should not show "syncing" forever with 0 progress.
+                active_session = None
+        latest_session = active_session or SyncSessionService.get_latest_sync_session(user=user, db=db)
+
+        # Base payload expected by frontend polling
+        payload = {
             "user_id": user.id,
             "user_email": user.email,
             "total_emails_in_database": total_emails,
             "last_sync": last_sync,
             "gmail_access_token_exists": bool(user.gmail_access_token),
             "gmail_refresh_token_exists": bool(user.gmail_refresh_token),
-            "status": "ready"
+            "status": "ready",
         }
+
+        if latest_session:
+            payload["sync_session"] = {
+                "session_id": latest_session.id,
+                "sync_type": latest_session.sync_type,
+                "sync_source": latest_session.sync_source,
+                "status": latest_session.status,
+                "started_at": latest_session.started_at.isoformat() if latest_session.started_at else None,
+                "completed_at": latest_session.completed_at.isoformat() if latest_session.completed_at else None,
+                "max_emails": latest_session.max_emails,
+                "start_date": latest_session.start_date,
+                "end_date": latest_session.end_date,
+            }
+
+        # Map DB session status -> UI status and progress object
+        if active_session:
+            # Frontend expects: data.status === 'syncing' and data.progress.*
+            payload["status"] = "syncing"
+            payload["progress"] = {
+                "emails_synced": active_session.emails_synced or 0,
+                "emails_processed": active_session.emails_processed or 0,
+                "errors": active_session.error_count or 0,
+                "current_batch": active_session.batches_processed or 0,
+                # Best-effort progress percentage when max_emails is known
+                "batch_progress": (
+                    min(
+                        100,
+                        round(
+                            ((active_session.emails_processed or 0) / max(active_session.max_emails or 1, 1)) * 100,
+                            1,
+                        ),
+                    )
+                    if (active_session.max_emails or 0) > 0
+                    else 0
+                ),
+                "new_emails": active_session.emails_synced or 0,
+                "last_error": active_session.last_error_message,
+            }
+        elif latest_session and latest_session.status == "completed":
+            payload["status"] = "completed"
+            payload["emails_synced"] = latest_session.emails_synced or 0
+        elif latest_session and latest_session.status in ("failed", "cancelled", "stopped"):
+            payload["status"] = "error"
+            payload["error"] = latest_session.last_error_message or f"Sync {latest_session.status}"
+        
+        return payload
         
     except Exception as e:
         logger.error(f"Error getting sync status: {e}")
@@ -632,6 +689,11 @@ async def start_sync_from_date(
 ):
     """Start a sync from a specific date (format: YYYY/MM/DD) (no auth required)"""
     try:
+        import asyncio
+        import anyio
+        from ..services.sync_session_service import SyncSessionService
+        from ..models.database import SessionLocal
+
         # Get the first user from database
         user = db.query(User).first()
         if not user:
@@ -642,20 +704,46 @@ async def start_sync_from_date(
         
         from ..services.sync_service import OptimizedSyncService
         sync_service = OptimizedSyncService()
-        
-        # Start sync from specific date
-        emails_synced = sync_service.sync_user_emails_from_date(user, start_date, max_emails)
-        
+
+        # Create a sync session up-front so UI can track it immediately
+        sync_session = SyncSessionService.create_sync_session(
+            user=user,
+            sync_type="date_range",
+            sync_source="api",
+            max_emails=max_emails,
+            start_date=start_date,
+            query_filter=f"after:{start_date}",
+            notes=f"Date range sync from {start_date} (background)",
+            db=db,
+        )
+
+        def _run_date_range_sync_background():
+            """Run sync in a worker thread so the HTTP request returns immediately."""
+            with SessionLocal() as bg_db:
+                bg_user = bg_db.query(User).filter(User.id == user.id).first()
+                if not bg_user:
+                    return
+                # Run sync and persist progress into the existing session
+                sync_service.sync_user_emails_from_date(
+                    bg_user,
+                    start_date=start_date,
+                    max_emails=max_emails,
+                    existing_session_id=sync_session.id,
+                )
+
+        # Fire-and-forget background sync (prevents frontend/node timeouts)
+        asyncio.create_task(anyio.to_thread.run_sync(_run_date_range_sync_background))
+
         return {
-            "message": f"Date range sync completed from {start_date}",
+            "message": f"Date range sync started from {start_date}",
             "user_id": user.id,
+            "session_id": sync_session.id,
             "result": {
-                "emails_synced": emails_synced,
                 "max_emails": max_emails,
                 "start_date": start_date,
-                "sync_type": "date_range"
+                "sync_type": "date_range",
             },
-            "status": "success"
+            "status": "started",
         }
         
     except Exception as e:
@@ -2336,13 +2424,13 @@ async def get_direct_emails(
             
             # Get paginated emails with minimal processing
             offset = (page - 1) * page_size
-            emails = db.execute(text(f"""
-                SELECT id, subject, sender, date_received, is_read, is_starred, 
+            emails = db.execute(text("""
+                SELECT id, subject, sender, date_received, is_read, is_starred,
                        LEFT(body_plain, 200) as body_preview
-                FROM emails 
-                ORDER BY date_received DESC 
-                LIMIT {page_size} OFFSET {offset}
-            """)).fetchall()
+                FROM emails
+                ORDER BY date_received DESC
+                LIMIT :page_size OFFSET :offset
+            """), {"page_size": page_size, "offset": offset}).fetchall()
             
             # Convert to simple dict format
             email_list = []
@@ -2391,27 +2479,27 @@ async def get_direct_search(
         try:
             # Use ILIKE for case-insensitive search
             search_term = f"%{q}%"
-            
+
             # Get total count
-            total_count = db.execute(text(f"""
-                SELECT COUNT(*) FROM emails 
-                WHERE subject ILIKE '{search_term}' 
-                   OR sender ILIKE '{search_term}' 
-                   OR body_plain ILIKE '{search_term}'
-            """)).scalar()
-            
+            total_count = db.execute(text("""
+                SELECT COUNT(*) FROM emails
+                WHERE subject ILIKE :search_term
+                   OR sender ILIKE :search_term
+                   OR body_plain ILIKE :search_term
+            """), {"search_term": search_term}).scalar()
+
             # Get paginated results
             offset = (page - 1) * page_size
-            emails = db.execute(text(f"""
-                SELECT id, subject, sender, date_received, is_read, is_starred, 
+            emails = db.execute(text("""
+                SELECT id, subject, sender, date_received, is_read, is_starred,
                        LEFT(body_plain, 200) as body_preview
-                FROM emails 
-                WHERE subject ILIKE '{search_term}' 
-                   OR sender ILIKE '{search_term}' 
-                   OR body_plain ILIKE '{search_term}'
-                ORDER BY date_received DESC 
-                LIMIT {page_size} OFFSET {offset}
-            """)).fetchall()
+                FROM emails
+                WHERE subject ILIKE :search_term
+                   OR sender ILIKE :search_term
+                   OR body_plain ILIKE :search_term
+                ORDER BY date_received DESC
+                LIMIT :page_size OFFSET :offset
+            """), {"search_term": search_term, "page_size": page_size, "offset": offset}).fetchall()
             
             # Convert to simple dict format
             email_list = []
@@ -2452,29 +2540,18 @@ async def get_direct_search(
 
 @router.get("/db/raw-count")
 async def get_raw_email_count():
-    """Get email count using direct psycopg2 connection (bypasses all ORM and connection pools)"""
+    """Get email count using raw SQL via SessionLocal"""
     try:
-        # Direct connection to PostgreSQL
-        conn = psycopg2.connect(
-            host="postgres",
-            database="gmail_backup",
-            user="gmail_user",
-            password="gmail_password",
-            options="-c statement_timeout=10000 -c idle_in_transaction_session_timeout=10000"
-        )
-        
+        db = SessionLocal()
         try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM emails")
-                result = cur.fetchone()[0]
-                
+            result = db.execute(text("SELECT COUNT(*) FROM emails")).scalar()
             return {
                 "total_emails": result,
                 "timestamp": datetime.now().isoformat(),
-                "method": "raw_psycopg2"
+                "method": "raw_sql"
             }
         finally:
-            conn.close()
+            db.close()
     except Exception as e:
         logger.error(f"Error in raw count: {e}")
         return {
@@ -2488,59 +2565,46 @@ async def get_raw_emails(
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=50)
 ):
-    """Get emails using direct psycopg2 connection (bypasses all ORM and connection pools)"""
+    """Get emails using raw SQL via SessionLocal"""
     try:
-        # Direct connection to PostgreSQL
-        conn = psycopg2.connect(
-            host="postgres",
-            database="gmail_backup",
-            user="gmail_user",
-            password="gmail_password",
-            options="-c statement_timeout=10000 -c idle_in_transaction_session_timeout=10000"
-        )
-        
+        db = SessionLocal()
         try:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                # Get total count
-                cur.execute("SELECT COUNT(*) FROM emails")
-                total_count = cur.fetchone()['count']
-                
-                # Get paginated emails
-                offset = (page - 1) * page_size
-                cur.execute(f"""
-                    SELECT id, subject, sender, date_received, is_read, is_starred, 
-                           LEFT(body_plain, 200) as body_preview
-                    FROM emails 
-                    ORDER BY date_received DESC 
-                    LIMIT {page_size} OFFSET {offset}
-                """)
-                
-                emails = cur.fetchall()
-                
-                # Convert to list of dicts
-                email_list = []
-                for email in emails:
-                    email_list.append({
-                        "id": email['id'],
-                        "subject": email['subject'] or "No Subject",
-                        "sender": email['sender'] or "Unknown",
-                        "date_received": email['date_received'].isoformat() if email['date_received'] else None,
-                        "is_read": email['is_read'],
-                        "is_starred": email['is_starred'],
-                        "body_plain": email['body_preview']
-                    })
-                
+            # Get total count
+            total_count = db.execute(text("SELECT COUNT(*) FROM emails")).scalar()
+
+            # Get paginated emails
+            offset = (page - 1) * page_size
+            rows = db.execute(text("""
+                SELECT id, subject, sender, date_received, is_read, is_starred,
+                       LEFT(body_plain, 200) as body_preview
+                FROM emails
+                ORDER BY date_received DESC
+                LIMIT :page_size OFFSET :offset
+            """), {"page_size": page_size, "offset": offset}).fetchall()
+
+            email_list = []
+            for row in rows:
+                email_list.append({
+                    "id": row.id,
+                    "subject": row.subject or "No Subject",
+                    "sender": row.sender or "Unknown",
+                    "date_received": row.date_received.isoformat() if row.date_received else None,
+                    "is_read": row.is_read,
+                    "is_starred": row.is_starred,
+                    "body_plain": row.body_preview
+                })
+
             return {
                 "emails": email_list,
                 "total_count": total_count,
                 "page": page,
                 "page_size": page_size,
                 "total_pages": (total_count + page_size - 1) // page_size,
-                "method": "raw_psycopg2"
+                "method": "raw_sql"
             }
-            
+
         finally:
-            conn.close()
+            db.close()
     except Exception as e:
         logger.error(f"Error in raw emails: {e}")
         return {
@@ -2556,27 +2620,16 @@ async def get_raw_emails(
 async def get_frontend_email_count():
     """Get email count using frontend database user (separate from sync user)"""
     try:
-        # Direct connection to PostgreSQL using frontend user
-        conn = psycopg2.connect(
-            host="postgres",
-            database="gmail_backup",
-            user="frontend_user",
-            password="frontend_password",
-            options="-c statement_timeout=5000 -c idle_in_transaction_session_timeout=5000"
-        )
-        
+        db = FrontendSessionLocal()
         try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM emails")
-                result = cur.fetchone()[0]
-                
+            result = db.execute(text("SELECT COUNT(*) FROM emails")).scalar()
             return {
                 "total_emails": result,
                 "timestamp": datetime.now().isoformat(),
                 "method": "frontend_user"
             }
         finally:
-            conn.close()
+            db.close()
     except Exception as e:
         logger.error(f"Error in frontend count: {e}")
         return {
@@ -2602,18 +2655,12 @@ async def get_file_cache_count():
         else:
             # If cache doesn't exist, try to create it from database
             try:
-                conn = psycopg2.connect(
-                    host="postgres",
-                    database="gmail_backup",
-                    user="gmail_user",
-                    password="gmail_password",
-                    options="-c statement_timeout=10000"
-                )
-                
-                with conn.cursor() as cur:
-                    cur.execute("SELECT COUNT(*) FROM emails")
-                    result = cur.fetchone()[0]
-                
+                db = SessionLocal()
+                try:
+                    result = db.execute(text("SELECT COUNT(*) FROM emails")).scalar()
+                finally:
+                    db.close()
+
                 # Create cache directory if it doesn't exist
                 cache_file.parent.mkdir(exist_ok=True)
                 
@@ -2683,28 +2730,20 @@ async def get_sync_progress():
         
         # Get current database email count
         try:
-            conn = psycopg2.connect(
-                host="postgres",
-                database="gmail_backup",
-                user="gmail_user",
-                password="gmail_password",
-                options="-c statement_timeout=5000"
-            )
-            
-            with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM emails")
-                current_email_count = cur.fetchone()[0]
-                
+            db = SessionLocal()
+            try:
+                current_email_count = db.execute(text("SELECT COUNT(*) FROM emails")).scalar()
+
                 # Get latest sync session
-                cur.execute("""
-                    SELECT id, status, emails_synced, emails_processed, started_at, completed_at 
-                    FROM sync_sessions 
-                    ORDER BY started_at DESC 
+                row = db.execute(text("""
+                    SELECT id, status, emails_synced, emails_processed, started_at, completed_at
+                    FROM sync_sessions
+                    ORDER BY started_at DESC
                     LIMIT 1
-                """)
-                session_result = cur.fetchone()
-                
-            conn.close()
+                """)).fetchone()
+                session_result = tuple(row) if row else None
+            finally:
+                db.close()
         except Exception as db_error:
             logger.error(f"Database error in sync progress: {db_error}")
             current_email_count = 0
@@ -2771,28 +2810,20 @@ async def get_real_time_sync_status():
         
         # Get current database email count
         try:
-            conn = psycopg2.connect(
-                host="postgres",
-                database="gmail_backup",
-                user="gmail_user",
-                password="gmail_password",
-                options="-c statement_timeout=5000"
-            )
-            
-            with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM emails")
-                current_email_count = cur.fetchone()[0]
-                
+            db = SessionLocal()
+            try:
+                current_email_count = db.execute(text("SELECT COUNT(*) FROM emails")).scalar()
+
                 # Get latest email timestamp
-                cur.execute("SELECT MAX(date_received) FROM emails")
-                latest_email_date = cur.fetchone()[0]
-                
+                latest_email_date = db.execute(text("SELECT MAX(date_received) FROM emails")).scalar()
+
                 # Get sync start time from background service
-                cur.execute("SELECT created_at FROM emails ORDER BY created_at DESC LIMIT 1")
-                last_sync_result = cur.fetchone()
-                last_sync_time = last_sync_result[0] if last_sync_result else None
-                
-            conn.close()
+                last_sync_row = db.execute(text(
+                    "SELECT created_at FROM emails ORDER BY created_at DESC LIMIT 1"
+                )).fetchone()
+                last_sync_time = last_sync_row[0] if last_sync_row else None
+            finally:
+                db.close()
         except Exception as db_error:
             logger.error(f"Database error in real-time status: {db_error}")
             current_email_count = 0
