@@ -2937,11 +2937,11 @@ async function loadAuthStatus() {
 
         if (data.authenticated) {
             dot.style.background = '#22c55e';
-            text.textContent = 'Authenticated';
+            text.textContent = 'Authenticated (auto-renews)';
             text.style.color = '#16a34a';
-        } else if (data.email && data.token_expired) {
+        } else if (data.email && !data.has_refresh_token) {
             dot.style.background = '#ef4444';
-            text.textContent = 'Token expired';
+            text.textContent = 'Refresh token missing — please re-authenticate';
             text.style.color = '#dc2626';
         } else {
             dot.style.background = '#ef4444';
@@ -2951,9 +2951,15 @@ async function loadAuthStatus() {
 
         if (data.email) {
             emailEl.textContent = data.email;
-            expiryEl.textContent = data.token_expiry
-                ? new Date(data.token_expiry).toLocaleString()
-                : '—';
+            if (data.token_expiry) {
+                const expiry = new Date(data.token_expiry);
+                const label = data.access_token_expired
+                    ? 'Access token expired (will auto-renew)'
+                    : expiry.toLocaleString() + ' (auto-renews)';
+                expiryEl.textContent = label;
+            } else {
+                expiryEl.textContent = '—';
+            }
             details.style.display = 'block';
         } else {
             details.style.display = 'none';
