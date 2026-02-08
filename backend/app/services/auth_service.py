@@ -2,7 +2,8 @@
 Authentication service for the Gmail Backup Manager
 """
 
-from fastapi import Depends, HTTPException, status
+import os
+from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from ..models.database import get_db
@@ -12,6 +13,29 @@ import logging
 logger = logging.getLogger(__name__)
 
 security = HTTPBearer()
+
+# ---------------------------------------------------------------------------
+# Simple API-key authentication for local deployment
+# ---------------------------------------------------------------------------
+
+_API_KEY: str = os.getenv("API_KEY", "")
+
+
+def verify_api_key(x_api_key: str = Header(default="")) -> str:
+    """FastAPI dependency that checks the X-API-Key header.
+
+    When API_KEY is not configured (empty string) authentication is
+    disabled so the app works out of the box for local development.
+    """
+    if not _API_KEY:
+        # No key configured – auth disabled
+        return ""
+    if x_api_key != _API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API key",
+        )
+    return x_api_key
 
 # For testing purposes - create a test user
 def create_test_user(db: Session):

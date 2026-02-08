@@ -3,9 +3,12 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool
 import os
+import logging
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # Database URL - PostgreSQL only
 DATABASE_URL = os.getenv(
@@ -76,7 +79,27 @@ def get_db():
     try:
         yield db
     finally:
-        db.close()
+        # During heavy sync / long-running transactions, PostgreSQL can close
+        # connections unexpectedly. SQLAlchemy may raise while trying to rollback
+        # on close(), which otherwise bubbles up as an HTTP 500 even though the
+        # request work itself may have completed successfully.
+        try:
+            db.close()
+        except Exception as e:
+            logger.warning(f"Non-fatal error while closing DB session: {e}")
+
+# Dependency to get a "frontend" DB session.
+# Uses a separate engine/pool with shorter timeouts to keep the API responsive
+# even while heavy sync operations are running.
+def get_frontend_db():
+    db = FrontendSessionLocal()
+    try:
+        yield db
+    finally:
+        try:
+            db.close()
+        except Exception as e:
+            logger.warning(f"Non-fatal error while closing FRONTEND DB session: {e}")
 
 # Function to create all tables
 def create_tables():

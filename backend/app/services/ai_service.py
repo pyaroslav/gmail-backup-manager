@@ -1,10 +1,3 @@
-import torch
-from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
-from sentence_transformers import SentenceTransformer
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import KMeans
-from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
 from typing import Dict, List, Optional, Tuple
 import logging
 from sqlalchemy.orm import Session
@@ -13,23 +6,56 @@ import re
 
 logger = logging.getLogger(__name__)
 
+# Lazy imports for heavy ML dependencies
+torch = None
+pipeline = None
+SentenceTransformer = None
+cosine_similarity = None
+KMeans = None
+np = None
+
+
+def _ensure_ml_deps():
+    """Import heavy ML dependencies on first use."""
+    global torch, pipeline, SentenceTransformer, cosine_similarity, KMeans, np
+    if torch is not None:
+        return
+    try:
+        import torch as _torch
+        from transformers import pipeline as _pipeline
+        from sentence_transformers import SentenceTransformer as _ST
+        from sklearn.metrics.pairwise import cosine_similarity as _cs
+        from sklearn.cluster import KMeans as _KM
+        import numpy as _np
+        torch = _torch
+        pipeline = _pipeline
+        SentenceTransformer = _ST
+        cosine_similarity = _cs
+        KMeans = _KM
+        np = _np
+    except ImportError as e:
+        logger.warning(f"ML dependencies not available: {e}")
+        raise
+
+
 class AIService:
     def __init__(self):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.sentiment_analyzer = None
         self.text_classifier = None
         self.summarizer = None
         self.embedding_model = None
         self._models_loaded = False
-        # Don't load models at startup - load them lazily when needed
+        self.device = None
         logger.info("AI Service initialized - models will be loaded on first use")
     
     def _load_models(self):
         """Load AI models for analysis - lazy loading"""
         if self._models_loaded:
             return
-            
+
         try:
+            _ensure_ml_deps()
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             logger.info("Loading AI models...")
             
             # Sentiment analysis

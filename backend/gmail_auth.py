@@ -34,7 +34,7 @@ def create_credentials_file():
     client_secret = settings.GMAIL_CLIENT_SECRET
     
     if not client_id or not client_secret:
-        print("❌ Gmail credentials not found in environment variables")
+        print("ERROR: Gmail credentials not found in environment variables")
         print("Please make sure GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET are set in your .env file")
         return False
     
@@ -53,12 +53,12 @@ def create_credentials_file():
     with open('credentials.json', 'w') as f:
         json.dump(credentials_data, f, indent=2)
     
-    print("✅ Created credentials.json file")
+    print("Created credentials.json file")
     return True
 
 def authenticate_gmail():
     """Authenticate with Gmail and get tokens"""
-    print("🔐 Starting Gmail Authentication Process")
+    print("Starting Gmail Authentication Process")
     print("=" * 50)
     
     # Create credentials file
@@ -69,23 +69,23 @@ def authenticate_gmail():
     
     # Check if we have valid credentials
     if os.path.exists('token.json'):
-        print("📄 Found existing token.json, checking if valid...")
+        print("Found existing token.json, checking if valid...")
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
     
     # If there are no (valid) credentials available, let the user log in
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            print("🔄 Refreshing expired token...")
+            print("Refreshing expired token...")
             try:
                 creds.refresh(Request())
             except Exception as e:
-                print(f"❌ Failed to refresh token: {e}")
+                print(f"ERROR: Failed to refresh token: {e}")
                 creds = None
         
         if not creds:
-            print("🔑 Starting OAuth2 authentication flow...")
-            print("📱 A browser window will open for you to authenticate with Google")
-            print("📋 Please follow the authentication steps in your browser")
+            print("Starting OAuth2 authentication flow...")
+            print("A browser window will open for you to authenticate with Google")
+            print("Please follow the authentication steps in your browser")
             
             try:
                 flow = InstalledAppFlow.from_client_secrets_file(
@@ -96,17 +96,17 @@ def authenticate_gmail():
                 with open('token.json', 'w') as token:
                     token.write(creds.to_json())
                 
-                print("✅ Authentication successful! Token saved to token.json")
+                print("Authentication successful! Token saved to token.json")
                 
             except Exception as e:
-                print(f"❌ Authentication failed: {e}")
+                print(f"ERROR: Authentication failed: {e}")
                 return None
     
     return creds
 
-def update_user_tokens(creds):
+def update_user_tokens(creds, email_address):
     """Update the user in the database with the new tokens"""
-    print("\n💾 Updating user tokens in database...")
+    print("\nUpdating user tokens in database...")
     
     # Create engine
     engine = create_engine(settings.DATABASE_URL)
@@ -114,11 +114,11 @@ def update_user_tokens(creds):
     db = SessionLocal()
     
     try:
-        # Get the test user
-        user = db.query(User).filter(User.email == "test@example.com").first()
+        # Get the user by email
+        user = db.query(User).filter(User.email == email_address).first()
         
         if not user:
-            print("❌ Test user not found")
+            print(f"ERROR: User {email_address} not found in database")
             return False
         
         # Update user with new tokens
@@ -127,11 +127,11 @@ def update_user_tokens(creds):
         user.gmail_token_expiry = creds.expiry
         
         db.commit()
-        print(f"✅ Updated user {user.email} with new Gmail tokens")
+        print(f"Updated user {user.email} with new Gmail tokens")
         return True
         
     except Exception as e:
-        print(f"❌ Error updating user: {e}")
+        print(f"ERROR: Error updating user: {e}")
         db.rollback()
         return False
     finally:
@@ -139,7 +139,7 @@ def update_user_tokens(creds):
 
 def test_gmail_access(creds):
     """Test if we can access Gmail with the new tokens"""
-    print("\n🧪 Testing Gmail access...")
+    print("\nTesting Gmail access...")
     
     try:
         from googleapiclient.discovery import build
@@ -150,45 +150,46 @@ def test_gmail_access(creds):
         profile = service.users().getProfile(userId='me').execute()
         email = profile['emailAddress']
         
-        print(f"✅ Successfully authenticated as: {email}")
+        print(f"Successfully authenticated as: {email}")
         
         # Try to get a few emails
         results = service.users().messages().list(userId='me', maxResults=5).execute()
         messages = results.get('messages', [])
         
-        print(f"✅ Successfully accessed Gmail - found {len(messages)} recent messages")
-        return True
+        print(f"Successfully accessed Gmail - found {len(messages)} recent messages")
+        return email
         
     except Exception as e:
-        print(f"❌ Gmail access test failed: {e}")
-        return False
+        print(f"ERROR: Gmail access test failed: {e}")
+        return None
 
 def main():
     """Main authentication process"""
-    print("🚀 Gmail Authentication Setup")
+    print("Gmail Authentication Setup")
     print("=" * 50)
     
     # Step 1: Authenticate with Gmail
     creds = authenticate_gmail()
     if not creds:
-        print("❌ Authentication failed")
+        print("ERROR: Authentication failed")
         return
-    
+
     # Step 2: Test Gmail access
-    if not test_gmail_access(creds):
-        print("❌ Gmail access test failed")
+    email_address = test_gmail_access(creds)
+    if not email_address:
+        print("ERROR: Gmail access test failed")
         return
-    
+
     # Step 3: Update user in database
-    if not update_user_tokens(creds):
-        print("❌ Failed to update user tokens")
+    if not update_user_tokens(creds, email_address):
+        print("ERROR: Failed to update user tokens")
         return
-    
-    print("\n🎉 Gmail Authentication Complete!")
+
+    print("\nGmail Authentication Complete!")
     print("=" * 50)
-    print("✅ You can now start syncing your emails")
-    print("📧 Run: curl -X POST http://127.0.0.1:8000/api/v1/sync/start")
-    print("📊 Check status: curl http://127.0.0.1:8000/api/v1/sync/status")
+    print("You can now start syncing your emails")
+    print("Run: curl -X POST http://127.0.0.1:8000/api/v1/test/sync/start")
+    print("Check status: curl http://127.0.0.1:8000/api/v1/test/sync/progress")
 
 if __name__ == "__main__":
     main()

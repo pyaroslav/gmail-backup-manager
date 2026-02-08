@@ -6,9 +6,9 @@ services:
     image: postgres:15
     container_name: gmail-backup-postgres
     environment:
-      POSTGRES_DB: gmail_backup
-      POSTGRES_USER: gmail_user
-      POSTGRES_PASSWORD: gmail_password
+      POSTGRES_DB: ${POSTGRES_DB:-gmail_backup}
+      POSTGRES_USER: ${POSTGRES_USER:-gmail_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gmail_password}
       # PostgreSQL configuration for better performance during sync
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
     volumes:
@@ -21,18 +21,6 @@ services:
     restart: unless-stopped
     command: postgres -c config_file=/etc/postgresql/postgresql.conf
 
-  # Redis for caching and background tasks
-  redis:
-    image: redis:7-alpine
-    container_name: gmail-backup-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    networks:
-      - gmail-backup-network
-    restart: unless-stopped
-
   # Backend API
   backend:
     build:
@@ -40,11 +28,11 @@ services:
       dockerfile: Dockerfile
     container_name: gmail-backup-backend
     environment:
-      - DATABASE_URL=postgresql://gmail_user:gmail_password@gmail-backup-postgres:5432/gmail_backup
-      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-gmail_user}:${POSTGRES_PASSWORD:-gmail_password}@gmail-backup-postgres:5432/${POSTGRES_DB:-gmail_backup}
       - GMAIL_CLIENT_ID=${GMAIL_CLIENT_ID}
       - GMAIL_CLIENT_SECRET=${GMAIL_CLIENT_SECRET}
       - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
+      - API_KEY=${API_KEY:-change-me-to-a-random-secret}
     volumes:
       - ./backend:/app
       - ./config:/app/config
@@ -53,10 +41,15 @@ services:
       - "8000:8000"
     depends_on:
       - postgres
-      - redis
     networks:
       - gmail-backup-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   # Node.js Frontend Server (Direct Database Access)
@@ -69,9 +62,10 @@ services:
       - NODE_ENV=production
       - DB_HOST=postgres
       - DB_PORT=5432
-      - DB_NAME=gmail_backup
-      - DB_USER=gmail_user
-      - DB_PASSWORD=gmail_password
+      - DB_NAME=${POSTGRES_DB:-gmail_backup}
+      - DB_USER=${POSTGRES_USER:-gmail_user}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-gmail_password}
+      - API_KEY=${API_KEY:-change-me-to-a-random-secret}
     volumes:
       - ./frontend:/app
     ports:
@@ -102,8 +96,6 @@ services:
 
 volumes:
   postgres_data:
-    driver: local
-  redis_data:
     driver: local
   attachments_data:
     driver: local
