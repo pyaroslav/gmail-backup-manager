@@ -166,18 +166,22 @@ async def auth_status(db: Session = Depends(get_db)):
         }
 
     now = datetime.now(timezone.utc)
-    token_expired = True
+    has_refresh_token = bool(user.gmail_refresh_token)
     token_expiry_str = None
+    access_token_expired = True
 
     if user.gmail_token_expiry:
         token_expiry_str = user.gmail_token_expiry.isoformat()
-        token_expired = user.gmail_token_expiry < now
+        access_token_expired = user.gmail_token_expiry < now
 
-    authenticated = bool(user.gmail_refresh_token) and not token_expired
+    # The user is authenticated as long as a refresh token exists — the
+    # access token is short-lived (~1 hour) and gets auto-renewed.
+    authenticated = has_refresh_token
 
     return {
         "authenticated": authenticated,
         "email": user.email,
         "token_expiry": token_expiry_str,
-        "token_expired": token_expired,
+        "access_token_expired": access_token_expired,
+        "has_refresh_token": has_refresh_token,
     }
