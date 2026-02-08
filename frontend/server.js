@@ -15,6 +15,14 @@ let syncControlState = {
 
 const app = express();
 const port = 3002;
+const API_KEY = process.env.API_KEY || '';
+
+// Helper: headers to send when proxying to the backend API
+function backendHeaders(extra) {
+    const h = {};
+    if (API_KEY) h['X-API-Key'] = API_KEY;
+    return Object.assign(h, extra);
+}
 
 // Enable CORS
 app.use(cors());
@@ -51,12 +59,22 @@ const pool = new Pool(dbConfig);
 const client = pool;
 
 // Connect to database (pool connects lazily, just verify connectivity)
-async function connectDB() {
-    try {
-        const res = await pool.query('SELECT 1');
-        console.log('Connected to PostgreSQL database via pool');
-    } catch (error) {
-        console.error('Database connection failed:', error);
+async function connectDB(retries = 5) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            await pool.query('SELECT 1');
+            console.log('Connected to PostgreSQL database via pool');
+            return;
+        } catch (error) {
+            const delay = Math.min(1000 * Math.pow(2, attempt), 32000);
+            console.error(`Database connection attempt ${attempt}/${retries} failed: ${error.message}`);
+            if (attempt < retries) {
+                console.log(`Retrying in ${delay / 1000}s...`);
+                await new Promise(r => setTimeout(r, delay));
+            } else {
+                console.error('All database connection attempts failed');
+            }
+        }
     }
 }
 
@@ -562,6 +580,7 @@ app.get('/api/db/sync-status', async (req, res) => {
         try {
             // Try to get background sync status from backend
             const backendResponse = await fetch('http://gmail-backup-backend:8000/api/v1/test/background-sync/status', {
+                headers: backendHeaders(),
                 signal: AbortSignal.timeout(2000) // 2 second timeout
             });
             
@@ -589,6 +608,7 @@ app.get('/api/db/sync-status', async (req, res) => {
                 if (syncInProgress) {
                     try {
                         const monitoringResponse = await fetch('http://gmail-backup-backend:8000/api/v1/test/sync/real-time-status', {
+                            headers: backendHeaders(),
                             signal: AbortSignal.timeout(500)
                         });
                         
@@ -617,6 +637,7 @@ app.get('/api/db/sync-status', async (req, res) => {
             // Try to detect sync by checking if there's an active sync process
             try {
                 const syncProcessResponse = await fetch('http://gmail-backup-backend:8000/api/v1/test/sync/status', {
+                    headers: backendHeaders(),
                     signal: AbortSignal.timeout(300) // Quick timeout
                 });
                 
@@ -637,6 +658,7 @@ app.get('/api/db/sync-status', async (req, res) => {
             try {
                 // Try to check if there's an active sync by looking at the sync progress endpoint
                 const progressResponse = await fetch('http://gmail-backup-backend:8000/api/v1/test/sync/progress', {
+                    headers: backendHeaders(),
                     signal: AbortSignal.timeout(1000)
                 });
                 
@@ -1118,6 +1140,7 @@ app.post('/api/sync/start', async (req, res) => {
             try {
                 response = await fetch(backendUrl, {
                     method: 'POST',
+                    headers: backendHeaders(),
                     signal: AbortSignal.timeout(30000) // 30 second timeout
                 });
                 break; // Success, exit retry loop
@@ -1230,6 +1253,7 @@ app.post('/api/sync/stop', async (req, res) => {
         try {
             const response = await fetch('http://gmail-backup-backend:8000/api/v1/test/sync/stop', {
                 method: 'POST',
+                headers: backendHeaders(),
                 signal: AbortSignal.timeout(3000) // 3 second timeout
             });
             
@@ -1970,6 +1994,27 @@ app.get('/api/health', (req, res) => {
         timestamp: new Date().toISOString(),
         server: 'nodejs_direct'
     });
+});
+
+// Proxy /api/v1/test/* to backend (used by script.js instead of direct localhost:8000)
+app.all('/api/v1/test/*', async (req, res) => {
+    try {
+        const backendUrl = `http://gmail-backup-backend:8000${req.originalUrl}`;
+        const fetchOpts = {
+            method: req.method,
+            headers: backendHeaders({'Content-Type': 'application/json'}),
+            signal: AbortSignal.timeout(30000),
+        };
+        if (['POST', 'PUT', 'PATCH'].includes(req.method) && req.body && Object.keys(req.body).length > 0) {
+            fetchOpts.body = JSON.stringify(req.body);
+        }
+        const backendRes = await fetch(backendUrl, fetchOpts);
+        const data = await backendRes.json();
+        res.status(backendRes.status).json(data);
+    } catch (error) {
+        console.error(`Backend proxy error for ${req.originalUrl}:`, error.message);
+        res.status(502).json({ error: 'Backend unavailable', detail: error.message });
+    }
 });
 
 // Start server

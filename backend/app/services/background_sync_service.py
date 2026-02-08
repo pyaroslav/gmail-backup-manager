@@ -21,6 +21,7 @@ class BackgroundSyncService:
         self.sync_interval = 300  # 5 minutes default
         self.last_sync_time = None
         self.sync_in_progress = False  # Lock to prevent overlapping syncs
+        self._sync_service = None  # Cached OptimizedSyncService instance
         self.sync_stats = {
             "total_syncs": 0,
             "total_emails_synced": 0,
@@ -30,6 +31,14 @@ class BackgroundSyncService:
             "start_time": None,
             "sync_in_progress": False
         }
+
+    @property
+    def sync_service(self):
+        """Lazily create and cache a single OptimizedSyncService instance."""
+        if self._sync_service is None:
+            from .sync_service import OptimizedSyncService
+            self._sync_service = OptimizedSyncService()
+        return self._sync_service
     
     async def start_background_sync(self, sync_interval_minutes: int = 5):
         """
@@ -114,12 +123,10 @@ class BackgroundSyncService:
                     if needs_sync:
                         logger.info(f"Syncing user: {user.email}")
 
-                        # Call sync service directly instead of HTTP self-call
-                        from .sync_service import OptimizedSyncService
-                        sync_service = OptimizedSyncService()
+                        # Call sync service directly
                         try:
                             emails_synced = await asyncio.to_thread(
-                                sync_service.sync_user_emails, user, 1000
+                                self.sync_service.sync_user_emails, user, 1000
                             )
                             self.sync_stats["total_syncs"] += 1
                             self.sync_stats["total_emails_synced"] += emails_synced

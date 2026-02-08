@@ -205,8 +205,7 @@ htmlcov/
 .pytest_cache/
 .tox/
 
-# Alembic
-alembic.ini
+# Alembic (keep alembic.ini tracked; only ignore auto-generated cache)
 migrations/
 
 # Redis dump

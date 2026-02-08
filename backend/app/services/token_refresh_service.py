@@ -91,7 +91,7 @@ class TokenRefreshService:
         
         # If token expires in less than refresh_threshold seconds, refresh it
         if time_until_expiry.total_seconds() < self.refresh_threshold:
-            logger.info(f"⏰ Token expiring soon for {user.email} (in {time_until_expiry.total_seconds():.0f}s), refreshing...")
+            logger.info(f"Token expiring soon for {user.email} (in {time_until_expiry.total_seconds():.0f}s), refreshing...")
             
             try:
                 # Create credentials object
@@ -114,19 +114,19 @@ class TokenRefreshService:
                 
                 db.commit()
                 
-                logger.info(f"✅ Token refreshed successfully for {user.email}")
+                logger.info(f"Token refreshed successfully for {user.email}")
                 logger.info(f"   New expiry: {creds.expiry}")
                 
             except RefreshError as e:
-                logger.error(f"❌ Token refresh failed for {user.email}: {e}")
-                logger.error(f"   Token may have been revoked")
-                logger.error(f"   ⚠️ MANUAL RE-AUTHENTICATION REQUIRED!")
+                logger.error(f"Token refresh failed for {user.email}: {e}")
+                logger.error("Token may have been revoked")
+                logger.error("MANUAL RE-AUTHENTICATION REQUIRED!")
                 logger.error(f"   Run: cd backend && python gmail_auth.py")
                 
                 # Don't raise - allow other users to be processed
                 
             except Exception as e:
-                logger.error(f"❌ Unexpected error refreshing token for {user.email}: {e}")
+                logger.error(f"Unexpected error refreshing token for {user.email}: {e}")
         else:
             logger.debug(f"Token for {user.email} still valid for {time_until_expiry.total_seconds()/3600:.1f}h")
     
@@ -135,7 +135,7 @@ class TokenRefreshService:
         Immediately refresh a user's token (synchronous)
         """
         try:
-            logger.info(f"🔄 Force-refreshing token for {user.email}...")
+            logger.info(f"Force-refreshing token for {user.email}...")
             
             creds = Credentials(
                 token=user.gmail_access_token,
@@ -155,14 +155,14 @@ class TokenRefreshService:
             
             db.commit()
             
-            logger.info(f"✅ Token refreshed for {user.email}")
+            logger.info(f"Token refreshed for {user.email}")
             return True
             
         except RefreshError as e:
-            logger.error(f"❌ Token refresh failed: {e}")
+            logger.error(f"Token refresh failed: {e}")
             return False
         except Exception as e:
-            logger.error(f"❌ Error: {e}")
+            logger.error(f"Error refreshing token: {e}")
             return False
 
 # Global instance

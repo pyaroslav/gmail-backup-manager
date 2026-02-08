@@ -79,14 +79,14 @@ class GmailService:
                                 db_user.gmail_refresh_token = creds.refresh_token
                             db_user.gmail_token_expiry = creds.expiry
                             db.commit()
-                            logger.info(f"✅ Token refreshed and saved to database for {user.email}")
+                            logger.info(f"Token refreshed and saved to database for {user.email}")
                             logger.info(f"   New expiry: {creds.expiry}")
                     finally:
                         db.close()
                         
                 except RefreshError as refresh_error:
-                    logger.error(f"❌ Token refresh failed for {user.email}: {refresh_error}")
-                    logger.error(f"⚠️ MANUAL RE-AUTHENTICATION REQUIRED!")
+                    logger.error(f"Token refresh failed for {user.email}: {refresh_error}")
+                    logger.error("MANUAL RE-AUTHENTICATION REQUIRED!")
                     logger.error(f"   Run: cd backend && python gmail_auth.py")
                     return False
                 
@@ -96,8 +96,8 @@ class GmailService:
         except Exception as e:
             logger.error(f"Authentication failed for {user.email}: {e}")
             if "invalid_grant" in str(e).lower() or "revoked" in str(e).lower():
-                logger.error(f"⚠️ Token has been revoked or expired!")
-                logger.error(f"⚠️ MANUAL RE-AUTHENTICATION REQUIRED!")
+                logger.error("Token has been revoked or expired!")
+                logger.error("MANUAL RE-AUTHENTICATION REQUIRED!")
                 logger.error(f"   Run: cd backend && python gmail_auth.py")
             return False
     

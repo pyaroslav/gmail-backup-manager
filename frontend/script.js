@@ -1,5 +1,5 @@
 // Global state
-console.log('🚀 SCRIPT LOADING STARTED');
+console.debug('[init] Script loading started');
 let currentPage = 1;
 let pageSize = 25;
 let totalEmails = 0;
@@ -119,7 +119,7 @@ function initializeNavigation() {
 // Health check function
 async function checkBackendHealth() {
     try {
-        const response = await fetch('http://localhost:3002/api/db/health');
+        const response = await fetch('/api/db/health');
         if (response.ok) {
             console.log('Backend is healthy');
             return true;
@@ -140,8 +140,8 @@ async function loadEmails(page = 1) {
         
         // Try Node.js endpoints first, avoid hanging backend calls
         const endpoints = [
-            `http://localhost:3002/api/db/emails?page=${page}&page_size=25`,  // Node.js direct server
-            `http://localhost:3002/api/db/email-count`  // Fallback to just count if emails fail
+            `/api/db/emails?page=${page}&page_size=25`,  // Node.js direct server
+            `/api/db/email-count`  // Fallback to just count if emails fail
         ];
         
         let response = null;
@@ -212,7 +212,7 @@ async function loadEmailsFallback(page = 1) {
     
     // Try a simpler endpoint with smaller page size
     const response = await Promise.race([
-        fetch(`http://localhost:8000/api/v1/test/emails/?page=${page}&page_size=10`),
+        fetch(`/api/v1/test/emails/?page=${page}&page_size=10`),
         new Promise((_, reject) => 
             setTimeout(() => reject(new Error('Fallback timeout')), 15000)
         )
@@ -481,7 +481,7 @@ function fetchAndRenderEmailDetail(email, targetElement) {
     // Show loading state immediately with preview text
     renderEmailDetail(email, '<div class="loading">Loading full content...</div>', targetElement);
 
-    fetch(`http://localhost:3002/api/db/email/${email.id}`)
+    fetch(`/api/db/email/${email.id}`)
         .then(response => response.json())
         .then(data => {
             if (data.success && data.email) {
@@ -621,7 +621,7 @@ async function markAsRead(emailId) {
     const numericEmailId = parseInt(emailId);
     
     try {
-        await fetch(`http://localhost:3002/api/db/emails/${numericEmailId}/read`, { method: 'POST' });
+        await fetch(`/api/db/emails/${numericEmailId}/read`, { method: 'POST' });
         const email = emails.find(e => e.id === numericEmailId);
         if (email) email.is_read = true;
         renderEmailList();
@@ -635,7 +635,7 @@ async function markAsUnread(emailId) {
     const numericEmailId = parseInt(emailId);
     
     try {
-        await fetch(`http://localhost:3002/api/db/emails/${numericEmailId}/unread`, { method: 'POST' });
+        await fetch(`/api/db/emails/${numericEmailId}/unread`, { method: 'POST' });
         const email = emails.find(e => e.id === numericEmailId);
         if (email) email.is_read = false;
         renderEmailList();
@@ -651,7 +651,7 @@ async function toggleStar(emailId, event) {
     const numericEmailId = parseInt(emailId);
     
     try {
-        await fetch(`http://localhost:3002/api/db/emails/${numericEmailId}/star`, { method: 'POST' });
+        await fetch(`/api/db/emails/${numericEmailId}/star`, { method: 'POST' });
         const email = emails.find(e => e.id === numericEmailId);
         if (email) email.is_starred = !email.is_starred;
         renderEmailList();
@@ -673,7 +673,7 @@ async function deleteEmail(emailId) {
     const numericEmailId = parseInt(emailId);
     
     try {
-        await fetch(`http://localhost:3002/api/db/emails/${numericEmailId}`, { method: 'DELETE' });
+        await fetch(`/api/db/emails/${numericEmailId}`, { method: 'DELETE' });
         
         // Remove from emails array
         emails = emails.filter(e => e.id !== numericEmailId);
@@ -782,10 +782,10 @@ document.getElementById('closeDetail').addEventListener('click', closeEmailDetai
 
 // Load dashboard
 function loadDashboard() {
-    console.log('🔄 Loading dashboard data...');
+    console.debug('[dashboard] Loading data...');
     
     // Use the comprehensive dashboard endpoint
-    const dashboardEndpoint = 'http://localhost:3002/api/db/dashboard';
+    const dashboardEndpoint = '/api/db/dashboard';
     
     Promise.race([
         fetch(dashboardEndpoint),
@@ -800,16 +800,16 @@ function loadDashboard() {
         return response.json();
     })
     .then(data => {
-        console.log('📊 Dashboard data received:', data);
-        
+        console.debug('[dashboard] Data received:', data);
+
         // Debug: Check if elements exist
         const totalEmailsElement = document.getElementById('totalEmails');
         const unreadEmailsElement = document.getElementById('unreadEmails');
         const lastSyncElement = document.getElementById('lastSync');
         const starredEmailsElement = document.getElementById('starredEmails');
         const databaseSizeElement = document.getElementById('databaseSize');
-        
-        console.log('🔍 Element check:', {
+
+        console.debug('[dashboard] Element check:', {
             totalEmails: !!totalEmailsElement,
             unreadEmails: !!unreadEmailsElement,
             lastSync: !!lastSyncElement,
@@ -821,18 +821,18 @@ function loadDashboard() {
         const totalEmails = data.total_emails || 0;
         if (totalEmailsElement) {
             totalEmailsElement.textContent = totalEmails.toLocaleString();
-            console.log('✅ Updated totalEmails element');
+            console.debug('[ok] Updated totalEmails element');
         } else {
-            console.error('❌ totalEmails element not found!');
+            console.debug('[error] totalEmails element not found!');
         }
         
         // Update unread emails
         const unreadEmails = data.unread_emails || 0;
         if (unreadEmailsElement) {
             unreadEmailsElement.textContent = unreadEmails.toLocaleString();
-            console.log('✅ Updated unreadEmails element');
+            console.debug('[ok] Updated unreadEmails element');
         } else {
-            console.error('❌ unreadEmails element not found!');
+            console.debug('[error] unreadEmails element not found!');
         }
         
         // Update last sync time
@@ -846,17 +846,17 @@ function loadDashboard() {
         }
         if (lastSyncElement) {
             lastSyncElement.textContent = lastSyncDisplay;
-            console.log('✅ Updated lastSync element');
+            console.debug('[ok] Updated lastSync element');
         } else {
-            console.error('❌ lastSync element not found!');
+            console.debug('[error] lastSync element not found!');
         }
         
         // Update starred emails (placeholder for now)
         if (starredEmailsElement) {
             starredEmailsElement.textContent = '0'; // TODO: Get actual starred count
-            console.log('✅ Updated starredEmails element');
+            console.debug('[ok] Updated starredEmails element');
         } else {
-            console.error('❌ starredEmails element not found!');
+            console.debug('[error] starredEmails element not found!');
         }
         
         // Update database size
@@ -868,13 +868,13 @@ function loadDashboard() {
             } else {
                 databaseSizeElement.textContent = `${totalEmails.toLocaleString()} emails`;
             }
-            console.log('✅ Updated databaseSize element');
+            console.debug('[ok] Updated databaseSize element');
         } else {
-            console.error('❌ databaseSize element not found!');
+            console.debug('[error] databaseSize element not found!');
         }
         
         // Update recent emails section if it exists
-        console.log('📧 Recent emails data check:', {
+        console.debug('[email] Recent emails data check:', {
             has_recent_emails: !!data.recent_emails,
             recent_emails_length: data.recent_emails ? data.recent_emails.length : 0,
             recent_emails: data.recent_emails ? data.recent_emails.slice(0, 2) : null // Show first 2 for debugging
@@ -883,19 +883,19 @@ function loadDashboard() {
         if (data.recent_emails && data.recent_emails.length > 0) {
             updateRecentEmailsSection(data.recent_emails);
         } else {
-            console.log('⚠️ No recent emails data available');
+            console.debug('[warn] No recent emails data available');
         }
         
-        console.log('✅ Dashboard updated successfully');
-        console.log(`📈 Total emails: ${totalEmails.toLocaleString()}`);
-        console.log(`🔄 Sync status: ${syncStatus}`);
-        console.log(`⏰ Last sync: ${lastSyncDisplay}`);
+        console.debug('[ok] Dashboard updated successfully');
+        console.debug(`[data] Total emails: ${totalEmails.toLocaleString()}`);
+        console.debug(`[sync] Sync status: ${syncStatus}`);
+        console.debug(`[time] Last sync: ${lastSyncDisplay}`);
     })
     .catch(error => {
-        console.error('❌ Dashboard loading failed:', error);
+        console.debug('[error] Dashboard loading failed:', error);
         
         // Fallback to simple email count
-        fetch('http://localhost:3002/api/db/email-count')
+        fetch('/api/db/email-count')
             .then(response => response.json())
             .then(data => {
                 const totalEmails = data.total_emails || 0;
@@ -916,10 +916,10 @@ function loadDashboard() {
                 if (starredEmailsElement) {
                     starredEmailsElement.textContent = '0';
                 }
-                console.log('✅ Dashboard updated with fallback data');
+                console.debug('[ok] Dashboard updated with fallback data');
             })
             .catch(fallbackError => {
-                console.error('❌ Fallback also failed:', fallbackError);
+                console.debug('[error] Fallback also failed:', fallbackError);
                 const totalEmailsElement = document.getElementById('totalEmails');
                 const unreadEmailsElement = document.getElementById('unreadEmails');
                 const lastSyncElement = document.getElementById('lastSync');
@@ -935,10 +935,10 @@ function loadDashboard() {
 
 // Load sync page data
 function loadSyncPage() {
-    console.log('🔄 Loading sync page data...');
+    console.debug('[sync] Loading sync page data...');
     
     // Use the comprehensive dashboard endpoint
-    const dashboardEndpoint = 'http://localhost:3002/api/db/dashboard';
+    const dashboardEndpoint = '/api/db/dashboard';
     
     Promise.race([
         fetch(dashboardEndpoint),
@@ -953,7 +953,7 @@ function loadSyncPage() {
         return response.json();
     })
     .then(data => {
-        console.log('📊 Sync page data received:', data);
+        console.debug('[data] Sync page data received:', data);
         
         // Debug: Check if sync page elements exist
         const syncStatusElement = document.getElementById('syncStatus');
@@ -961,7 +961,7 @@ function loadSyncPage() {
         const totalSyncedElement = document.getElementById('totalSynced');
         const syncDatabaseSizeElement = document.getElementById('syncDatabaseSize');
         
-        console.log('🔍 Sync page element check:', {
+        console.debug('[debug] Sync page element check:', {
             syncStatus: !!syncStatusElement,
             lastSyncTime: !!lastSyncTimeElement,
             totalSynced: !!totalSyncedElement,
@@ -972,9 +972,9 @@ function loadSyncPage() {
         const syncStatus = data.sync_in_progress ? 'Sync in progress' : 'Ready to sync';
         if (syncStatusElement) {
             syncStatusElement.textContent = syncStatus;
-            console.log('✅ Updated syncStatus element');
+            console.debug('[ok] Updated syncStatus element');
         } else {
-            console.error('❌ syncStatus element not found!');
+            console.debug('[error] syncStatus element not found!');
         }
         
         // Update last sync time
@@ -988,18 +988,18 @@ function loadSyncPage() {
         }
         if (lastSyncTimeElement) {
             lastSyncTimeElement.textContent = lastSyncDisplay;
-            console.log('✅ Updated lastSyncTime element');
+            console.debug('[ok] Updated lastSyncTime element');
         } else {
-            console.error('❌ lastSyncTime element not found!');
+            console.debug('[error] lastSyncTime element not found!');
         }
         
         // Update total synced
         const totalEmails = data.total_emails || 0;
         if (totalSyncedElement) {
             totalSyncedElement.textContent = `${totalEmails.toLocaleString()} emails`;
-            console.log('✅ Updated totalSynced element');
+            console.debug('[ok] Updated totalSynced element');
         } else {
-            console.error('❌ totalSynced element not found!');
+            console.debug('[error] totalSynced element not found!');
         }
         
         // Update sync database size
@@ -1011,21 +1011,21 @@ function loadSyncPage() {
             } else {
                 syncDatabaseSizeElement.textContent = `${totalEmails.toLocaleString()} emails`;
             }
-            console.log('✅ Updated syncDatabaseSize element');
+            console.debug('[ok] Updated syncDatabaseSize element');
         } else {
-            console.error('❌ syncDatabaseSize element not found!');
+            console.debug('[error] syncDatabaseSize element not found!');
         }
         
-        console.log('✅ Sync page updated successfully');
-        console.log(`📈 Total emails: ${totalEmails.toLocaleString()}`);
-        console.log(`🔄 Sync status: ${syncStatus}`);
-        console.log(`⏰ Last sync: ${lastSyncDisplay}`);
+        console.debug('[ok] Sync page updated successfully');
+        console.debug(`[data] Total emails: ${totalEmails.toLocaleString()}`);
+        console.debug(`[sync] Sync status: ${syncStatus}`);
+        console.debug(`[time] Last sync: ${lastSyncDisplay}`);
     })
     .catch(error => {
-        console.error('❌ Sync page loading failed:', error);
+        console.debug('[error] Sync page loading failed:', error);
         
         // Fallback to simple email count
-        fetch('http://localhost:3002/api/db/email-count')
+        fetch('/api/db/email-count')
             .then(response => response.json())
             .then(data => {
                 const totalEmails = data.total_emails || 0;
@@ -1039,10 +1039,10 @@ function loadSyncPage() {
                 if (totalSyncedElement) totalSyncedElement.textContent = `${totalEmails.toLocaleString()} emails`;
                 if (syncDatabaseSizeElement) syncDatabaseSizeElement.textContent = `${totalEmails.toLocaleString()} emails`;
                 
-                console.log('✅ Sync page updated with fallback data');
+                console.debug('[ok] Sync page updated with fallback data');
             })
             .catch(fallbackError => {
-                console.error('❌ Sync page fallback also failed:', fallbackError);
+                console.debug('[error] Sync page fallback also failed:', fallbackError);
                 const syncStatusElement = document.getElementById('syncStatus');
                 const lastSyncTimeElement = document.getElementById('lastSyncTime');
                 const totalSyncedElement = document.getElementById('totalSynced');
@@ -1058,15 +1058,15 @@ function loadSyncPage() {
 
 // Update recent emails section
 function updateRecentEmailsSection(recentEmails) {
-    console.log('📧 Updating recent emails section with:', recentEmails.length, 'emails');
+    console.debug('[email] Updating recent emails section with:', recentEmails.length, 'emails');
     
     const recentEmailsContainer = document.querySelector('.recent-emails-list');
     if (!recentEmailsContainer) {
-        console.error('❌ Recent emails container not found!');
+        console.debug('[error] Recent emails container not found!');
         return;
     }
     
-    console.log('✅ Found recent emails container, updating with', recentEmails.length, 'emails');
+    console.debug('[ok] Found recent emails container, updating with', recentEmails.length, 'emails');
     
     const emailsHTML = recentEmails.map(email => `
         <div class="recent-email-item ${email.is_read ? 'read' : 'unread'}" data-email-id="${email.id}">
@@ -1089,16 +1089,16 @@ function updateRecentEmailsSection(recentEmails) {
         });
     });
     
-    console.log('✅ Recent emails section updated successfully with click handlers');
+    console.debug('[ok] Recent emails section updated successfully with click handlers');
 }
 
 // Show email modal with email details
 function showEmailModal(emailId) {
-    console.log('📧 Opening email modal for ID:', emailId);
+    console.debug('[email] Opening email modal for ID:', emailId);
     
     const modal = document.getElementById('emailModal');
     if (!modal) {
-        console.error('❌ Email modal not found!');
+        console.debug('[error] Email modal not found!');
         return;
     }
     
@@ -1111,7 +1111,7 @@ function showEmailModal(emailId) {
     document.getElementById('modalEmailContent').textContent = 'Loading email content...';
     
     // Fetch email details
-    fetch(`http://localhost:3002/api/db/email/${emailId}`)
+    fetch(`/api/db/email/${emailId}`)
         .then(response => {
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
@@ -1139,13 +1139,13 @@ function showEmailModal(emailId) {
                     contentElement.textContent = 'No content available';
                 }
                 
-                console.log('✅ Email modal populated with data');
+                console.debug('[ok] Email modal populated with data');
             } else {
                 throw new Error('Invalid response format');
             }
         })
         .catch(error => {
-            console.error('❌ Error loading email details:', error);
+            console.debug('[error] Error loading email details:', error);
             document.getElementById('modalEmailSubject').textContent = 'Error Loading Email';
             document.getElementById('modalEmailSender').textContent = 'Error';
             document.getElementById('modalEmailDate').textContent = 'Error';
@@ -1186,7 +1186,7 @@ function initializeEmailModal() {
     const closeBtn = document.getElementById('closeEmailModal');
     
     if (!modal || !closeBtn) {
-        console.error('❌ Email modal elements not found!');
+        console.debug('[error] Email modal elements not found!');
         return;
     }
     
@@ -1209,7 +1209,7 @@ function initializeEmailModal() {
         }
     });
     
-    console.log('✅ Email modal functionality initialized');
+    console.debug('[ok] Email modal functionality initialized');
 }
 
 // Search functionality
@@ -1254,7 +1254,7 @@ function performSearch(page = 1) {
     
     // Use Node.js search endpoint only to avoid hanging backend calls
     const searchEndpoints = [
-        `http://localhost:3002/api/db/search?q=${encodeURIComponent(searchTerm)}&page=${page}&page_size=${searchPageSize}&filter=${encodeURIComponent(searchFilter)}&date_from=${encodeURIComponent(dateFrom)}&date_to=${encodeURIComponent(dateTo)}`  // Node.js direct server
+        `/api/db/search?q=${encodeURIComponent(searchTerm)}&page=${page}&page_size=${searchPageSize}&filter=${encodeURIComponent(searchFilter)}&date_from=${encodeURIComponent(dateFrom)}&date_to=${encodeURIComponent(dateTo)}`  // Node.js direct server
     ];
     
     let searchPromise = null;
@@ -1398,7 +1398,7 @@ function showSearchPagination() {
 
 // Resume sync functionality
 function resumeSync() {
-    console.log('🔄 Resuming sync from where it left off...');
+    console.debug('[sync] Resuming sync from where it left off...');
     
     // Show loading state
     const resumeSyncBtn = document.getElementById('resumeSyncBtn');
@@ -1406,7 +1406,7 @@ function resumeSync() {
     resumeSyncBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Resuming...';
     resumeSyncBtn.disabled = true;
     
-    fetch('http://localhost:3002/api/sync/resume', {
+    fetch('/api/sync/resume', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
@@ -1414,10 +1414,10 @@ function resumeSync() {
     })
     .then(response => response.json())
     .then(data => {
-        console.log('📊 Resume sync response:', data);
+        console.debug('[data] Resume sync response:', data);
         
         if (data.success) {
-            console.log('✅ Sync resumed successfully!');
+            console.debug('[ok] Sync resumed successfully!');
             
             // Show success message
             showNotification('Sync resumed successfully from where it left off!', 'success');
@@ -1429,13 +1429,13 @@ function resumeSync() {
             addLogEntry('SYNC RESUMED', `Resumed sync with configuration: ${JSON.stringify(data.resume_config)}`);
             
         } else {
-            console.error('❌ Failed to resume sync:', data.error);
+            console.debug('[error] Failed to resume sync:', data.error);
             showNotification(`Failed to resume sync: ${data.error}`, 'error');
             addLogEntry('SYNC RESUME FAILED', data.error, 'error');
         }
     })
     .catch(error => {
-        console.error('❌ Error resuming sync:', error);
+        console.debug('[error] Error resuming sync:', error);
         showNotification(`Error resuming sync: ${error.message}`, 'error');
         addLogEntry('SYNC RESUME ERROR', error.message, 'error');
     })
@@ -1487,7 +1487,7 @@ function initializeSync() {
     loadSyncMonitoring();
     
     // Let the API data flow through naturally - no hardcoded values
-    console.log('✅ Sync page monitoring initialized - will use API data');
+    console.debug('[ok] Sync page monitoring initialized - will use API data');
     
     // Check resume availability
     checkResumeAvailability();
@@ -1512,11 +1512,11 @@ function setDefaultDates() {
 
 // Load sync status with better error handling
 function loadSyncStatus() {
-    console.log('🔄 loadSyncStatus called - this should not update total emails on sync page');
+    console.debug('[sync] loadSyncStatus called - this should not update total emails on sync page');
     // Use Node.js endpoints only to avoid hanging backend calls
     const endpoints = [
-        'http://localhost:3002/api/db/sync-status',  // Node.js sync status
-        'http://localhost:3002/api/db/email-count'   // Node.js direct server
+        '/api/db/sync-status',  // Node.js sync status
+        '/api/db/email-count'   // Node.js direct server
     ];
     
     let currentEndpoint = 0;
@@ -1566,7 +1566,7 @@ function loadSyncStatus() {
                 // Check if we're on the sync page
                 const syncPageElement = document.querySelector('#syncPage');
                 const currentPage = syncPageElement && syncPageElement.style.display === 'block' ? 'sync' : 'other';
-                console.log('🔍 loadSyncStatus - currentPage:', currentPage, 'syncPage display:', syncPageElement?.style.display);
+                console.debug('[debug] loadSyncStatus - currentPage:', currentPage, 'syncPage display:', syncPageElement?.style.display);
                 
                 // Only update sync status if we're not on the sync page (where loadSyncMonitoring handles it)
                 if (currentPage !== 'sync') {
@@ -1594,14 +1594,14 @@ function loadSyncStatus() {
                 
                 // Only update total emails if we're not on the sync page (where loadSyncMonitoring handles it)
                 if (totalSyncedElement && currentPage !== 'sync') {
-                    console.log('✅ loadSyncStatus updating total emails to:', data.total_emails);
+                    console.debug('[ok] loadSyncStatus updating total emails to:', data.total_emails);
                     totalSyncedElement.textContent = `${data.total_emails?.toLocaleString() || 0} emails`;
                 } else {
                     console.log('🚫 loadSyncStatus skipping total emails update (on sync page)');
                 }
                 
                 // Debug: Check if we're actually on the sync page
-                console.log('🔍 loadSyncStatus debug - syncPage display:', syncPageElement?.style.display, 'currentPage:', currentPage);
+                console.debug('[debug] loadSyncStatus debug - syncPage display:', syncPageElement?.style.display, 'currentPage:', currentPage);
                 
                 // Display database size in GB if available
                 console.log('Database size data:', { 
@@ -1643,7 +1643,7 @@ function loadSyncStatus() {
             }
         })
         .catch(error => {
-            console.log(`❌ Endpoint ${endpoint} failed: ${error.message}`);
+            console.debug(`[error] Endpoint ${endpoint} failed: ${error.message}`);
             currentEndpoint++;
             setTimeout(tryEndpoint, 500);
         });
@@ -1657,7 +1657,7 @@ async function getEmailCountFallback() {
     try {
         // Try to get count from Node.js direct database endpoint
         const response = await Promise.race([
-            fetch('http://localhost:3002/api/db/email-count'),
+            fetch('/api/db/email-count'),
             new Promise((_, reject) => 
                 setTimeout(() => reject(new Error('Count timeout')), 3000)
             )
@@ -1706,7 +1706,7 @@ function performFullSync() {
 function startBackgroundSync() {
     const interval = document.getElementById('backgroundInterval').value;
     
-    fetch('http://localhost:8000/api/v1/test/background-sync/start', {
+    fetch('/api/v1/test/background-sync/start', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -1731,7 +1731,7 @@ function startBackgroundSync() {
 }
 
 function stopBackgroundSync() {
-    fetch('http://localhost:8000/api/v1/test/background-sync/stop', {
+    fetch('/api/v1/test/background-sync/stop', {
         method: 'POST'
     })
     .then(response => response.json())
@@ -1762,18 +1762,18 @@ function startSyncOperation(type, params) {
     const monitoring = document.getElementById('syncMonitoring');
     
     // Check if sync is already running before starting (with retry)
-    console.log('🔍 Checking if sync is already running...');
+    console.debug('[debug] Checking if sync is already running...');
     checkSyncStatusAndStart(type, params, startBtn, stopBtn, progress, monitoring);
 }
 
 function checkSyncStatusAndStart(type, params, startBtn, stopBtn, progress, monitoring, retryCount = 0) {
-    console.log('🔍 Starting sync status check (attempt ' + (retryCount + 1) + '/3)...');
-    fetch('http://localhost:3002/api/db/sync-monitoring')
+    console.debug('[debug] Starting sync status check (attempt ' + (retryCount + 1) + '/3)...');
+    fetch('/api/db/sync-monitoring')
         .then(response => response.json())
         .then(data => {
-            console.log('🔍 Sync status check result (attempt ' + (retryCount + 1) + '):', data.sync_progress);
+            console.debug('[debug] Sync status check result (attempt ' + (retryCount + 1) + '):', data.sync_progress);
             if (data.sync_progress.is_active) {
-                console.log('⚠️ Sync already running - switching to monitoring mode');
+                console.debug('[warn] Sync already running - switching to monitoring mode');
                 addLogEntry('Sync Status', 'Sync already in progress - monitoring existing sync');
                 showNotification('Sync already running - monitoring progress', 'info');
                 
@@ -1785,7 +1785,7 @@ function checkSyncStatusAndStart(type, params, startBtn, stopBtn, progress, moni
                 
                 // Start monitoring the existing sync
                 startRealTimeMonitoring();
-                console.log('🛑 Returning early - not starting new sync');
+                console.debug('[stop] Returning early - not starting new sync');
                 return;
             }
             
@@ -1799,7 +1799,7 @@ function checkSyncStatusAndStart(type, params, startBtn, stopBtn, progress, moni
             }
             
             // After retries, proceed with starting new sync
-            console.log('✅ No active sync found after ' + (retryCount + 1) + ' checks - starting new sync');
+            console.debug('[ok] No active sync found after ' + (retryCount + 1) + ' checks - starting new sync');
             startNewSyncOperation(type, params, startBtn, stopBtn, progress, monitoring);
         })
         .catch(error => {
@@ -1812,22 +1812,22 @@ function checkSyncStatusAndStart(type, params, startBtn, stopBtn, progress, moni
                 return;
             }
             // After retries, proceed with starting sync anyway
-            console.log('⚠️ Proceeding with sync start after ' + (retryCount + 1) + ' failed attempts');
+            console.debug('[warn] Proceeding with sync start after ' + (retryCount + 1) + ' failed attempts');
             startNewSyncOperation(type, params, startBtn, stopBtn, progress, monitoring);
         });
 }
 
 function startNewSyncOperation(type, params, startBtn, stopBtn, progress, monitoring) {
-    console.log('🚀 startNewSyncOperation called with type:', type, 'params:', params);
+    console.debug('[init] startNewSyncOperation called with type:', type, 'params:', params);
     
     // Final safety check - make sure no sync is running before we start
-    console.log('🔒 Final safety check - verifying no active sync...');
-    fetch('http://localhost:3002/api/db/sync-monitoring')
+    console.debug('[auth] Final safety check - verifying no active sync...');
+    fetch('/api/db/sync-monitoring')
         .then(response => response.json())
         .then(data => {
             if (data.sync_progress.is_active) {
                 console.log('🚨 SAFETY CHECK FAILED: Active sync detected during startNewSyncOperation!');
-                console.log('🔄 Switching to monitoring mode instead of starting new sync');
+                console.debug('[sync] Switching to monitoring mode instead of starting new sync');
                 addLogEntry('Sync Status', 'Active sync detected during startup - switching to monitoring');
                 showNotification('Active sync detected - monitoring existing sync', 'info');
                 
@@ -1843,12 +1843,12 @@ function startNewSyncOperation(type, params, startBtn, stopBtn, progress, monito
             }
             
             // No active sync, proceed with starting new sync
-            console.log('✅ Safety check passed - no active sync, proceeding with new sync');
+            console.debug('[ok] Safety check passed - no active sync, proceeding with new sync');
             proceedWithNewSync(type, params, startBtn, stopBtn, progress, monitoring);
         })
         .catch(error => {
             console.error('Error in final safety check:', error);
-            console.log('⚠️ Proceeding with sync start despite safety check error');
+            console.debug('[warn] Proceeding with sync start despite safety check error');
             proceedWithNewSync(type, params, startBtn, stopBtn, progress, monitoring);
         });
 }
@@ -1869,7 +1869,7 @@ function proceedWithNewSync(type, params, startBtn, stopBtn, progress, monitorin
     clearSyncErrors();
     
     // Use Node.js sync control endpoint to avoid hanging
-    const endpoint = 'http://localhost:3002/api/sync/start';
+    const endpoint = '/api/sync/start';
     const requestBody = {
         sync_type: type,
         max_emails: params.max_emails
@@ -1899,7 +1899,7 @@ function proceedWithNewSync(type, params, startBtn, stopBtn, progress, monitorin
     startRealTimeMonitoring();
     
     // Start the sync using Node.js endpoint
-    console.log('🚀 Starting sync operation with:', requestBody);
+    console.debug('[init] Starting sync operation with:', requestBody);
     fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -1914,26 +1914,26 @@ function proceedWithNewSync(type, params, startBtn, stopBtn, progress, monitorin
         if (!response.ok) {
             if (response.status === 409) {
                 // Sync already in progress
-                console.log('⚠️ Sync already in progress (409) - parsing response...');
+                console.debug('[warn] Sync already in progress (409) - parsing response...');
                 return response.json().then(data => {
-                    console.log('📋 409 response data:', data);
+                    console.debug('[info] 409 response data:', data);
                     throw new Error(`Sync already in progress: ${data.error}`);
                 }).catch(parseError => {
-                    console.error('❌ Error parsing 409 response:', parseError);
+                    console.debug('[error] Error parsing 409 response:', parseError);
                     throw new Error(`Sync already in progress: Unable to parse response`);
                 });
             }
-            console.log('❌ HTTP error - status:', response.status);
+            console.debug('[error] HTTP error - status:', response.status);
             // Try to get error details from response
             return response.text().then(text => {
-                console.log('❌ Error response body:', text);
+                console.debug('[error] Error response body:', text);
                 throw new Error(`HTTP error! status: ${response.status} - ${text}`);
             }).catch(textError => {
-                console.error('❌ Error reading error response:', textError);
+                console.debug('[error] Error reading error response:', textError);
                 throw new Error(`HTTP error! status: ${response.status}`);
             });
         }
-        console.log('✅ Sync start successful - parsing response...');
+        console.debug('[ok] Sync start successful - parsing response...');
         return response.json();
     })
     .then(data => {
@@ -1951,7 +1951,7 @@ function proceedWithNewSync(type, params, startBtn, stopBtn, progress, monitorin
         
         // Check if this is a "sync already in progress" error
         if (error.message.includes('Sync already in progress')) {
-            console.log('🔄 Sync already running - switching to monitoring mode');
+            console.debug('[sync] Sync already running - switching to monitoring mode');
             addLogEntry('Sync Status', 'Sync already in progress - monitoring existing sync');
             showNotification('Sync already running - monitoring progress', 'info');
             
@@ -1987,7 +1987,7 @@ function stopSync() {
     showNotification('Sync stopped by user', 'info');
     
     // Try to stop the sync using Node.js endpoint
-    fetch('http://localhost:3002/api/sync/stop', {
+    fetch('/api/sync/stop', {
         method: 'POST'
     })
     .then(response => response.json())
@@ -2058,7 +2058,7 @@ function completeSyncOperation(emailsSynced, totalEmails, startTime, isError = f
 
 function resetLastSync() {
     if (confirm('This will reset the last sync time and allow syncing all emails from the beginning. Continue?')) {
-        fetch('http://localhost:8000/api/v1/test/sync/reset-last-sync', {
+        fetch('/api/v1/test/sync/reset-last-sync', {
             method: 'POST'
         })
         .then(response => response.json())
@@ -2131,7 +2131,7 @@ let monitoringInterval = null;
 let progressUpdateInterval = null;
 
 function startRealTimeMonitoring() {
-    console.log('🔄 Starting real-time sync monitoring...');
+    console.debug('[sync] Starting real-time sync monitoring...');
     
     // Clear any existing intervals
     stopRealTimeMonitoring();
@@ -2196,7 +2196,7 @@ function fetchSyncStatus() {
         return;
     }
     
-    fetch('http://localhost:8000/api/v1/test/sync/status')
+    fetch('/api/v1/test/sync/status')
         .then(response => response.json())
         .then(data => {
             if (data.status === 'syncing') {
@@ -2324,7 +2324,7 @@ let chartInstances = {};
 
 // Analytics functionality
 function loadAnalytics() {
-    console.log('🔄 Loading comprehensive analytics...');
+    console.debug('[sync] Loading comprehensive analytics...');
     
     const analyticsPage = document.getElementById('analyticsPage');
     const loadingElement = document.getElementById('analyticsLoading');
@@ -2332,7 +2332,7 @@ function loadAnalytics() {
     const errorElement = document.getElementById('analyticsError');
     
     if (!analyticsPage) {
-        console.error('❌ Analytics page element not found!');
+        console.debug('[error] Analytics page element not found!');
         return;
     }
     
@@ -2349,16 +2349,16 @@ function loadAnalytics() {
     
     // Fetch comprehensive analytics data
     Promise.all([
-        fetch(`http://localhost:3002/api/analytics/overview?range=${timeRange}`),
-        fetch(`http://localhost:3002/api/analytics/trends?range=${timeRange}`),
-        fetch('http://localhost:3002/api/db/dashboard')
+        fetch(`/api/analytics/overview?range=${timeRange}`),
+        fetch(`/api/analytics/trends?range=${timeRange}`),
+        fetch('/api/db/dashboard')
     ])
     .then(responses => {
-        console.log('🌐 Analytics API responses received:', responses.map(r => r.status));
+        console.debug('[net] Analytics API responses received:', responses.map(r => r.status));
         return Promise.all(responses.map(r => r.json()));
     })
     .then(([overviewData, trendsData, dashboardData]) => {
-        console.log('📊 Comprehensive analytics data loaded successfully!');
+        console.debug('[data] Comprehensive analytics data loaded successfully!');
         
         if (overviewData.success && trendsData.success) {
             displayComprehensiveAnalytics(overviewData.data, trendsData.data, dashboardData);
@@ -2367,7 +2367,7 @@ function loadAnalytics() {
         }
     })
     .catch(error => {
-        console.error('❌ Error loading analytics:', error);
+        console.debug('[error] Error loading analytics:', error);
         loadingElement.style.display = 'none';
         contentElement.style.display = 'none';
         errorElement.style.display = 'block';
@@ -2423,7 +2423,7 @@ function displayComprehensiveAnalytics(overviewData, trendsData, dashboardData) 
     // Display insights
     displayAdvancedInsights(overviewData, trendsData, dashboardData);
     
-    console.log('✅ Comprehensive analytics displayed successfully!');
+    console.debug('[ok] Comprehensive analytics displayed successfully!');
 }
 
 function displayKeyMetrics(overview, dashboardData) {
@@ -2896,7 +2896,7 @@ function initializeAnalyticsControls() {
 
 function exportAnalyticsData() {
     // Implementation for exporting analytics data
-    console.log('📊 Exporting analytics data...');
+    console.debug('[data] Exporting analytics data...');
     alert('Export functionality will be implemented in the next version.');
 }
 
@@ -3066,8 +3066,8 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('App initialization complete');
     
     } catch (error) {
-        console.error('❌ Error during app initialization:', error);
-        console.error('❌ Error stack:', error.stack);
+        console.debug('[error] Error during app initialization:', error);
+        console.debug('[error] Error stack:', error.stack);
     }
     
     // Start sync status refresh
@@ -3084,13 +3084,13 @@ window.closeSearchEmailDetail = closeSearchEmailDetail;
 
 // Debug function for testing
 window.testAnalytics = function() {
-    console.log('🧪 TEST ANALYTICS CALLED');
-    console.log('🧪 loadAnalytics function type:', typeof loadAnalytics);
-    console.log('🧪 Calling loadAnalytics...');
+    console.debug('[test] TEST ANALYTICS CALLED');
+    console.debug('[test] loadAnalytics function type:', typeof loadAnalytics);
+    console.debug('[test] Calling loadAnalytics...');
     loadAnalytics();
 };
 
-console.log('🎯 SCRIPT LOADING COMPLETED - testAnalytics should be available');
+console.debug('[init] Script loading completed - testAnalytics should be available');
 
 // Function to clear all sync intervals and force refresh
 window.clearAllSyncIntervals = function() {
@@ -3098,39 +3098,39 @@ window.clearAllSyncIntervals = function() {
     if (syncStatusInterval) {
         clearInterval(syncStatusInterval);
         syncStatusInterval = null;
-        console.log('✅ Cleared syncStatusInterval');
+        console.debug('[ok] Cleared syncStatusInterval');
     }
     if (window.progressUpdateInterval) {
         clearInterval(window.progressUpdateInterval);
         window.progressUpdateInterval = null;
-        console.log('✅ Cleared progressUpdateInterval');
+        console.debug('[ok] Cleared progressUpdateInterval');
     }
     if (window.monitoringInterval) {
         clearInterval(window.monitoringInterval);
         window.monitoringInterval = null;
-        console.log('✅ Cleared monitoringInterval');
+        console.debug('[ok] Cleared monitoringInterval');
     }
 };
 
 // Function to force refresh sync status
 window.forceRefreshSyncStatus = function() {
-    console.log('🔄 Force refreshing sync status...');
+    console.debug('[sync] Force refreshing sync status...');
     clearAllSyncIntervals();
     loadSyncMonitoring();
 };
 
 // Global error handler
 window.addEventListener('error', (event) => {
-    console.error('❌ Global JavaScript Error:', event.error);
-    console.error('❌ Error message:', event.message);
-    console.error('❌ Error filename:', event.filename);
-    console.error('❌ Error line:', event.lineno);
-    console.error('❌ Error column:', event.colno);
+    console.debug('[error] Global JavaScript Error:', event.error);
+    console.debug('[error] Error message:', event.message);
+    console.debug('[error] Error filename:', event.filename);
+    console.debug('[error] Error line:', event.lineno);
+    console.debug('[error] Error column:', event.colno);
 });
 
 // Unhandled promise rejection handler
 window.addEventListener('unhandledrejection', (event) => {
-    console.error('❌ Unhandled Promise Rejection:', event.reason);
+    console.debug('[error] Unhandled Promise Rejection:', event.reason);
 });
 
 // Display sync details for currently running sync
@@ -3146,7 +3146,7 @@ function displaySyncDetails(syncDetails) {
     }
     
     let detailsHTML = '<div class="sync-details-panel">';
-    detailsHTML += '<h4>🔄 Current Sync Process</h4>';
+    detailsHTML += '<h4>[sync] Current Sync Process</h4>';
     
     // Sync type and status
     if (syncDetails.sync_type) {
@@ -3179,7 +3179,7 @@ function displaySyncDetails(syncDetails) {
     // Emails processed (show actual synced emails prominently)
     if (syncDetails.emails_processed !== undefined) {
         const emailCount = syncDetails.emails_processed;
-        let emailIcon = '📧';
+        let emailIcon = '[email]';
         if (emailCount > 1000) emailIcon = '📬';
         if (emailCount > 10000) emailIcon = '📭';
         
@@ -3189,10 +3189,10 @@ function displaySyncDetails(syncDetails) {
     // Speed with trend indicator
     if (syncDetails.emails_per_minute !== undefined) {
         const speed = syncDetails.emails_per_minute;
-        let speedIcon = '📈';
-        if (speed > 100) speedIcon = '🚀';
-        else if (speed > 50) speedIcon = '⚡';
-        else if (speed > 10) speedIcon = '📈';
+        let speedIcon = '[data]';
+        if (speed > 100) speedIcon = '[init]';
+        else if (speed > 50) speedIcon = '[perf]';
+        else if (speed > 10) speedIcon = '[data]';
         else speedIcon = '🐌';
         
         detailsHTML += `<p><strong>Speed:</strong> <span class="live-speed">${speed}</span> emails/min ${speedIcon}</p>`;
@@ -3215,24 +3215,24 @@ function displaySyncDetails(syncDetails) {
                 timeLeftText = `${minutesLeft}m remaining`;
             }
             
-            detailsHTML += `<p><strong>Estimated completion:</strong> ${estimatedTime.toLocaleString()} (${timeLeftText}) ⏰</p>`;
+            detailsHTML += `<p><strong>Estimated completion:</strong> ${estimatedTime.toLocaleString()} (${timeLeftText}) [time]</p>`;
         } else {
-            detailsHTML += `<p><strong>Estimated completion:</strong> ${estimatedTime.toLocaleString()} (completing soon) ⏰</p>`;
+            detailsHTML += `<p><strong>Estimated completion:</strong> ${estimatedTime.toLocaleString()} (completing soon) [time]</p>`;
         }
     }
     
     // Current batch
     if (syncDetails.current_batch !== undefined && syncDetails.total_batches !== undefined) {
-        detailsHTML += `<p><strong>Batch:</strong> ${syncDetails.current_batch} of ${syncDetails.total_batches} 📦</p>`;
+        detailsHTML += `<p><strong>Batch:</strong> ${syncDetails.current_batch} of ${syncDetails.total_batches}</p>`;
     }
     
     // Note
     if (syncDetails.note) {
-        detailsHTML += `<p><strong>Activity:</strong> ${syncDetails.note} 📊</p>`;
+        detailsHTML += `<p><strong>Activity:</strong> ${syncDetails.note} [data]</p>`;
     }
     
     // Auto-refresh indicator
-    detailsHTML += '<p class="refresh-indicator">🔄 Auto-refreshing every 5 seconds</p>';
+    detailsHTML += '<p class="refresh-indicator">[sync] Auto-refreshing every 5 seconds</p>';
     
     detailsHTML += '</div>';
     
@@ -3309,17 +3309,17 @@ function stopSyncStatusRefresh() {
 
 // Check if sync can be resumed
 function checkResumeAvailability() {
-    console.log('🔍 Checking resume availability...');
+    console.debug('[debug] Checking resume availability...');
     
-    fetch('http://localhost:3002/api/sync/resume-info')
+    fetch('/api/sync/resume-info')
         .then(response => response.json())
         .then(data => {
-            console.log('📊 Resume info:', data);
+            console.debug('[data] Resume info:', data);
             
             const resumeSyncBtn = document.getElementById('resumeSyncBtn');
             
             if (data.success && data.resume_info.can_resume) {
-                console.log('✅ Resume available:', data.resume_info.resume_reason);
+                console.debug('[ok] Resume available:', data.resume_info.resume_reason);
                 resumeSyncBtn.disabled = false;
                 resumeSyncBtn.title = `Resume from ${data.resume_info.resume_reason}`;
                 
@@ -3328,7 +3328,7 @@ function checkResumeAvailability() {
                 resumeSyncBtn.classList.remove('btn-secondary');
                 
             } else {
-                console.log('❌ Resume not available');
+                console.debug('[error] Resume not available');
                 resumeSyncBtn.disabled = true;
                 resumeSyncBtn.title = 'No sync to resume';
                 
@@ -3338,7 +3338,7 @@ function checkResumeAvailability() {
             }
         })
         .catch(error => {
-            console.error('❌ Error checking resume availability:', error);
+            console.debug('[error] Error checking resume availability:', error);
             const resumeSyncBtn = document.getElementById('resumeSyncBtn');
             resumeSyncBtn.disabled = true;
             resumeSyncBtn.title = 'Error checking resume availability';
@@ -3347,11 +3347,11 @@ function checkResumeAvailability() {
 
 // Load real-time sync monitoring data
 function loadSyncMonitoring() {
-    console.log('🔄 loadSyncMonitoring called - fetching latest sync status...');
-    fetch('http://localhost:3002/api/db/sync-monitoring')
+    console.debug('[sync] loadSyncMonitoring called - fetching latest sync status...');
+    fetch('/api/db/sync-monitoring')
         .then(response => response.json())
         .then(data => {
-            console.log('📊 Sync monitoring data received:', data);
+            console.debug('[data] Sync monitoring data received:', data);
             
             const syncProgress = data.sync_progress;
             const dbStats = data.database_stats;
@@ -3361,7 +3361,7 @@ function loadSyncMonitoring() {
             const startSyncBtn = document.getElementById('startSync');
             const stopSyncBtn = document.getElementById('stopSync');
             
-            console.log('🔍 Sync progress check - is_active:', syncProgress.is_active, 'status:', syncProgress.status);
+            console.debug('[debug] Sync progress check - is_active:', syncProgress.is_active, 'status:', syncProgress.status);
             
             if (syncProgress.is_active && syncProgress.status !== 'stale') {
                 console.log('🟡 Sync is ACTIVE - updating UI to show sync in progress');
@@ -3438,8 +3438,8 @@ function loadSyncMonitoring() {
             
         })
         .catch(error => {
-            console.error('❌ Error loading sync monitoring:', error);
-            console.log('🔄 Falling back to loadSyncStatus due to error');
+            console.debug('[error] Error loading sync monitoring:', error);
+            console.debug('[sync] Falling back to loadSyncStatus due to error');
             // Fall back to regular sync status
             loadSyncStatus();
         });
@@ -3449,13 +3449,13 @@ function loadSyncMonitoring() {
 // Let API data determine the correct value
 function forceUpdateTotalEmails() {
     // This function is no longer needed - API data will be used
-    console.log('✅ Total emails will be updated via API data');
+    console.debug('[ok] Total emails will be updated via API data');
 }
 
 // Simple monitoring - let API data flow through
 function startTotalEmailsMonitoring() {
     // This function is no longer needed - API data will be used
-    console.log('✅ Total emails monitoring disabled - using API data');
+    console.debug('[ok] Total emails monitoring disabled - using API data');
 }
 
 function startSyncMonitoringRefresh() {
@@ -3466,7 +3466,7 @@ function startSyncMonitoringRefresh() {
     
     // Refresh every 3 seconds for real-time updates
     syncStatusInterval = setInterval(() => {
-        console.log('🔄 Interval triggered - calling loadSyncMonitoring');
+        console.debug('[sync] Interval triggered - calling loadSyncMonitoring');
         loadSyncMonitoring();
     }, 3000);
 }
@@ -3550,10 +3550,10 @@ async function loadRealNotifications() {
             renderNotifications();
         }
         
-        console.log('✅ Real notifications loaded:', notifications.length);
+        console.debug('[ok] Real notifications loaded:', notifications.length);
         
     } catch (error) {
-        console.error('❌ Error loading real notifications:', error);
+        console.debug('[error] Error loading real notifications:', error);
         // Fallback to basic notifications
         notifications = [
             {
@@ -3618,7 +3618,7 @@ function initNotifications() {
         }
     });
     
-    console.log('✅ Notification system initialized');
+    console.debug('[ok] Notification system initialized');
 }
 
 // Toggle notification dropdown
@@ -3700,7 +3700,7 @@ function clearAllNotifications() {
     notifications = [];
     updateNotificationCount();
     renderNotifications();
-    console.log('✅ All notifications cleared');
+    console.debug('[ok] All notifications cleared');
 }
 
 // Add new notification
@@ -3723,7 +3723,7 @@ function addNotification(title, message, type = 'info') {
         renderNotifications();
     }
     
-    console.log('✅ New notification added:', title);
+    console.debug('[ok] New notification added:', title);
 }
 
 // Initialize notifications when DOM is loaded
