@@ -1426,18 +1426,18 @@ function resumeSync() {
             loadSyncMonitoring();
             
             // Log the resume action
-            addToSyncLog('SYNC RESUMED', `Resumed sync with configuration: ${JSON.stringify(data.resume_config)}`);
+            addLogEntry('SYNC RESUMED', `Resumed sync with configuration: ${JSON.stringify(data.resume_config)}`);
             
         } else {
             console.error('❌ Failed to resume sync:', data.error);
             showNotification(`Failed to resume sync: ${data.error}`, 'error');
-            addToSyncLog('SYNC RESUME FAILED', data.error);
+            addLogEntry('SYNC RESUME FAILED', data.error, 'error');
         }
     })
     .catch(error => {
         console.error('❌ Error resuming sync:', error);
         showNotification(`Error resuming sync: ${error.message}`, 'error');
-        addToSyncLog('SYNC RESUME ERROR', error.message);
+        addLogEntry('SYNC RESUME ERROR', error.message, 'error');
     })
     .finally(() => {
         // Restore button state
@@ -1447,7 +1447,16 @@ function resumeSync() {
 }
 
 // Sync functionality
+let syncInitialized = false;
 function initializeSync() {
+    if (syncInitialized) {
+        // Already initialized, just refresh data
+        loadSyncMonitoring();
+        checkResumeAvailability();
+        return;
+    }
+    syncInitialized = true;
+
     // Initialize all sync buttons
     const quickSyncBtn = document.getElementById('quickSyncBtn');
     const dateRangeSyncBtn = document.getElementById('dateRangeSyncBtn');
@@ -1456,22 +1465,23 @@ function initializeSync() {
     const stopBackgroundSyncBtn = document.getElementById('stopBackgroundSyncBtn');
     const startSyncBtn = document.getElementById('startSync');
     const stopSyncBtn = document.getElementById('stopSync');
+    const resumeSyncBtn = document.getElementById('resumeSyncBtn');
     const resetLastSyncBtn = document.getElementById('resetLastSyncBtn');
     const clearLogBtn = document.getElementById('clearLogBtn');
     const exportLogBtn = document.getElementById('exportLogBtn');
 
-    // Add event listeners
-    quickSyncBtn.addEventListener('click', () => performQuickSync());
-    dateRangeSyncBtn.addEventListener('click', () => performDateRangeSync());
-    fullSyncBtn.addEventListener('click', () => performFullSync());
-    startBackgroundSyncBtn.addEventListener('click', () => startBackgroundSync());
-    stopBackgroundSyncBtn.addEventListener('click', () => stopBackgroundSync());
-    startSyncBtn.addEventListener('click', () => startManualSync());
-    resumeSyncBtn.addEventListener('click', () => resumeSync());
-    stopSyncBtn.addEventListener('click', () => stopSync());
-    resetLastSyncBtn.addEventListener('click', () => resetLastSync());
-    clearLogBtn.addEventListener('click', () => clearLog());
-    exportLogBtn.addEventListener('click', () => exportLog());
+    // Add event listeners with null guards
+    if (quickSyncBtn) quickSyncBtn.addEventListener('click', () => performQuickSync());
+    if (dateRangeSyncBtn) dateRangeSyncBtn.addEventListener('click', () => performDateRangeSync());
+    if (fullSyncBtn) fullSyncBtn.addEventListener('click', () => performFullSync());
+    if (startBackgroundSyncBtn) startBackgroundSyncBtn.addEventListener('click', () => startBackgroundSync());
+    if (stopBackgroundSyncBtn) stopBackgroundSyncBtn.addEventListener('click', () => stopBackgroundSync());
+    if (startSyncBtn) startSyncBtn.addEventListener('click', () => startManualSync());
+    if (resumeSyncBtn) resumeSyncBtn.addEventListener('click', () => resumeSync());
+    if (stopSyncBtn) stopSyncBtn.addEventListener('click', () => stopSync());
+    if (resetLastSyncBtn) resetLastSyncBtn.addEventListener('click', () => resetLastSync());
+    if (clearLogBtn) clearLogBtn.addEventListener('click', () => clearLog());
+    if (exportLogBtn) exportLogBtn.addEventListener('click', () => exportLog());
 
     // Load initial sync monitoring data
     loadSyncMonitoring();
@@ -1927,12 +1937,12 @@ function proceedWithNewSync(type, params, startBtn, stopBtn, progress, monitorin
         return response.json();
     })
     .then(data => {
-        if (data.status === 'success') {
-            emailsSynced = data.result?.emails_synced || 0;
+        if (data.success || data.status === 'success') {
+            emailsSynced = data.data?.emails_synced || data.result?.emails_synced || 0;
             addLogEntry('Sync Completed', `Successfully synced ${emailsSynced} emails`);
             completeSyncOperation(emailsSynced, totalEmails, syncStartTime);
         } else {
-            throw new Error(data.error || 'Sync failed');
+            throw new Error(data.error || data.message || 'Sync failed');
         }
     })
     .catch(error => {
@@ -1983,17 +1993,12 @@ function stopSync() {
     .then(response => response.json())
     .then(data => {
         console.log('Stop sync response:', data);
-        if (data.status === 'success') {
-            if (data.sync_stopped) {
-                addLogEntry('Backend Sync Stopped', 'Sync process stopped on server');
-                showNotification('Sync stopped successfully', 'success');
-            } else {
-                addLogEntry('No Active Sync', 'No active sync found to stop');
-                showNotification('No active sync to stop', 'info');
-            }
+        if (data.success || data.status === 'success') {
+            addLogEntry('Backend Sync Stopped', data.message || 'Sync process stopped on server');
+            showNotification('Sync stopped successfully', 'success');
         } else {
-            addLogEntry('Stop Error', data.error || 'Unknown error stopping sync');
-            showNotification('Error stopping sync: ' + (data.error || 'Unknown error'), 'error');
+            addLogEntry('Stop Error', data.error || data.message || 'Unknown error stopping sync');
+            showNotification('Error stopping sync: ' + (data.error || data.message || 'Unknown error'), 'error');
         }
     })
     .catch(error => {
@@ -3416,11 +3421,11 @@ function loadSyncMonitoring() {
                 hideSyncDetails();
             }
             
-            // Update database stats (but don't touch total emails - let the simple interval handle it)
-            console.log('🔄 loadSyncMonitoring - database stats available:', dbStats);
-            
-            // Don't update total emails here - let the simple interval handle it
-            console.log('🔄 loadSyncMonitoring - skipping total emails update (handled by simple interval)');
+            // Update database stats
+            const totalSyncedEl = document.getElementById('totalSynced');
+            if (totalSyncedEl && dbStats.total_emails !== undefined) {
+                totalSyncedEl.textContent = `${Number(dbStats.total_emails).toLocaleString()} emails`;
+            }
             document.getElementById('syncDatabaseSize').textContent = `${dbStats.database_size_gb} GB`;
             
             // Update last sync time
