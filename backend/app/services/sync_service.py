@@ -486,13 +486,17 @@ class OptimizedSyncService:
         """
         if not self.gmail_service.authenticate_user(user):
             raise Exception("Failed to authenticate with Gmail")
-        
+
         # Create sync session to track this sync
         sync_session = None
         emails_synced = 0
+        emails_processed = 0
+        emails_skipped = 0
+        batches_processed = 0
+        error_count = 0
         page_token = None
         api_batch_size = 100  # Reduced batch size to avoid memory issues
-        
+
         try:
             # Create sync session
             sync_session = SyncSessionService.create_sync_session(
@@ -503,66 +507,104 @@ class OptimizedSyncService:
                 notes='Full sync - fetching all available emails'
             )
             logger.info(f"Started full sync session {sync_session.id} for user {user.id}")
-            
+
         except Exception as e:
             logger.error(f"Failed to create sync session: {e}")
             # Continue without session tracking if it fails
-        
+
         try:
             logger.info("Starting full sync - fetching all available emails")
-            
+
             while True:
                 # Get batch of email IDs from Gmail
                 batch_size = min(api_batch_size, max_emails - emails_synced) if max_emails else api_batch_size
-                
+
                 request_params = {
                     'userId': 'me',
                     'maxResults': batch_size
                 }
-                
+
                 if page_token:
                     request_params['pageToken'] = page_token
-                
+
                 logger.info(f"Requesting batch of {batch_size} emails (page_token: {bool(page_token)})")
-                
+
                 results = self.gmail_service.service.users().messages().list(**request_params).execute()
                 messages = results.get('messages', [])
-                
+
                 if not messages:
                     logger.info("No more messages to process")
                     break
-                
+
                 logger.info(f"Processing batch of {len(messages)} emails (total synced: {emails_synced})")
-                
+
                 # Process emails sequentially to avoid memory issues
                 for message in messages:
                     try:
+                        emails_processed += 1
                         if self._process_single_email(user, message['id']):
                             emails_synced += 1
-                            
+
                             if emails_synced % 25 == 0:  # Log every 25 emails
                                 logger.info(f"Progress: {emails_synced} emails synced")
-                                
+
                     except Exception as e:
                         logger.error(f"Error processing email {message['id']}: {e}")
+                        error_count += 1
                         continue
-                
+
+                emails_skipped = max(0, emails_processed - emails_synced)
+                batches_processed += 1
+
+                # Update sync session progress after each batch
+                if sync_session:
+                    try:
+                        SyncSessionService.update_sync_progress(
+                            sync_session.id,
+                            emails_processed=emails_processed,
+                            emails_synced=emails_synced,
+                            emails_skipped=emails_skipped,
+                            batches_processed=batches_processed,
+                            error_count=error_count,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to update sync progress for session {sync_session.id}: {e}")
+
                 page_token = results.get('nextPageToken')
                 if not page_token:
                     logger.info("No more pages available")
                     break
-                
+
                 if max_emails and emails_synced >= max_emails:
                     logger.info(f"Reached max emails limit: {max_emails}")
                     break
-                
+
                 # Add a small delay to avoid rate limiting
                 time.sleep(0.1)
-                    
+
         except Exception as e:
             logger.error(f"Error in full email sync: {e}")
+            if sync_session:
+                try:
+                    SyncSessionService.fail_sync_session(sync_session.id, str(e))
+                except Exception:
+                    pass
             raise
-            
+
+        # Mark sync session as completed
+        if sync_session:
+            try:
+                final_stats = {
+                    'emails_synced': emails_synced,
+                    'emails_processed': emails_processed,
+                    'emails_skipped': emails_skipped,
+                    'batches_processed': batches_processed,
+                    'error_count': error_count,
+                }
+                SyncSessionService.complete_sync_session(sync_session.id, final_stats)
+            except Exception as e:
+                logger.warning(f"Failed to complete sync session {sync_session.id}: {e}")
+
         logger.info(f"Full sync completed: {emails_synced} emails synced")
         return emails_synced
     
